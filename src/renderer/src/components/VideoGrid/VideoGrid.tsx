@@ -1,5 +1,7 @@
 import { useMemo, useState, useEffect } from 'react'
-import { Film, Heart, Clock, HardDrive, Loader2, Play } from 'lucide-react'
+import { Film, Heart, Clock, HardDrive, Loader2, Play, ArrowUpDown } from 'lucide-react'
+import { FixedSizeGrid as Grid } from 'react-window'
+import AutoSizer from 'react-virtualized-auto-sizer'
 import { Video } from '../../types/video'
 
 interface VideoGridProps {
@@ -14,6 +16,14 @@ interface VideoGridProps {
     onToggleFavorite: (videoPath: string) => void
     onVideoEdit: (video: Video) => void
 }
+
+type SortField = 'name' | 'date' | 'size' | 'duration'
+type SortOrder = 'asc' | 'desc'
+
+// Constants for Grid Layout
+const CARD_MIN_WIDTH = 250
+const CARD_HEIGHT = 280
+const GAP = 16
 
 // Format file size to human readable
 function formatSize(bytes: number): string {
@@ -32,9 +42,9 @@ function formatDuration(seconds: number): string {
     const secs = Math.floor(seconds % 60)
 
     if (hours > 0) {
-        return `${hours}:${minutes.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`
+        return `${hours}:${minutes.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')} `
     }
-    return `${minutes}:${secs.toString().padStart(2, '0')}`
+    return `${minutes}:${secs.toString().padStart(2, '0')} `
 }
 
 // Get file extension display
@@ -54,6 +64,10 @@ export default function VideoGrid({
     onToggleFavorite,
     onVideoEdit
 }: VideoGridProps): JSX.Element {
+    // Sort state
+    const [sortField, setSortField] = useState<SortField>('name')
+    const [sortOrder, setSortOrder] = useState<SortOrder>('asc')
+
     // Filter videos based on current selection
     const filteredVideos = useMemo(() => {
         let filtered = [...videos]
@@ -82,15 +96,74 @@ export default function VideoGrid({
             )
         }
 
+        // Apply Sorting
+        filtered.sort((a, b) => {
+            let comparison = 0
+            switch (sortField) {
+                case 'name':
+                    comparison = a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' })
+                    break
+                case 'date':
+                    comparison = new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
+                    break
+                case 'size':
+                    comparison = a.size - b.size
+                    break
+                case 'duration':
+                    comparison = (a.duration || 0) - (b.duration || 0)
+                    break
+            }
+            return sortOrder === 'asc' ? comparison : -comparison
+        })
+
         return filtered
-    }, [videos, selectedFolder, selectedTag, showFavorites, searchQuery])
+    }, [videos, selectedFolder, selectedTag, showFavorites, searchQuery, sortField, sortOrder])
 
     // Get header title
     const getTitle = () => {
         if (showFavorites) return 'お気に入り'
-        if (selectedTag) return `タグ: ${selectedTag}`
+        if (selectedTag) return `タグ: ${selectedTag} `
         if (selectedFolder) return selectedFolder.split(/[\\/]/).pop() || 'フォルダ'
         return 'すべての動画'
+    }
+
+    // Cast components to any to avoid type complexity with certain versions
+    // and handle potential CJS/ESM interop issues in Vite
+    const VirtualGrid = Grid as any
+    const ProxyAutoSizer = AutoSizer as any
+
+    // Cell renderer for react-window
+    const Cell = ({ columnIndex, rowIndex, style, data }: any) => {
+        const { videos, columnCount } = data
+        const index = rowIndex * columnCount + columnIndex
+
+        if (index >= videos.length) return null
+
+        const video = videos[index]
+
+        // Ensure we handle the style correctly as it's passed by react-window
+        const left = (typeof style.left === 'number' ? style.left : parseFloat(style.left)) + GAP
+        const top = (typeof style.top === 'number' ? style.top : parseFloat(style.top)) + GAP
+        const width = (typeof style.width === 'number' ? style.width : parseFloat(style.width)) - GAP
+        const height = (typeof style.height === 'number' ? style.height : parseFloat(style.height)) - GAP
+
+        return (
+            <div style={{
+                ...style,
+                left,
+                top,
+                width,
+                height
+            }}>
+                <VideoCard
+                    video={video}
+                    index={index}
+                    onPlay={() => onVideoPlay(video)}
+                    onToggleFavorite={() => onToggleFavorite(video.path)}
+                    onEdit={() => onVideoEdit(video)}
+                />
+            </div>
+        )
     }
 
     return (
@@ -109,10 +182,33 @@ export default function VideoGrid({
                         )}
                     </p>
                 </div>
+
+                {/* Sort Control */}
+                <div className="flex items-center gap-2">
+                    <ArrowUpDown className="w-4 h-4 text-cn-text-muted" />
+                    <select
+                        value={`${sortField} -${sortOrder} `}
+                        onChange={(e) => {
+                            const [field, order] = e.target.value.split('-') as [SortField, SortOrder]
+                            setSortField(field)
+                            setSortOrder(order)
+                        }}
+                        className="bg-cn-surface hover:bg-cn-surface-hover border border-cn-border rounded-lg text-sm text-cn-text px-3 py-1.5 focus:outline-none focus:border-cn-accent transition-colors"
+                    >
+                        <option value="name-asc">名前 (A-Z)</option>
+                        <option value="name-desc">名前 (Z-A)</option>
+                        <option value="date-desc">日付 (新しい順)</option>
+                        <option value="date-asc">日付 (古い順)</option>
+                        <option value="size-desc">サイズ (大きい順)</option>
+                        <option value="size-asc">サイズ (小さい順)</option>
+                        <option value="duration-desc">時間 (長い順)</option>
+                        <option value="duration-asc">時間 (短い順)</option>
+                    </select>
+                </div>
             </header>
 
-            {/* Grid */}
-            <div className="flex-1 overflow-y-auto p-6">
+            {/* Grid Container - Important: needs relative and min-size for AutoSizer */}
+            <div className="flex-1 w-full h-full p-2 relative min-h-0 min-w-0">
                 {filteredVideos.length === 0 && !isLoading ? (
                     <div className="flex flex-col items-center justify-center h-full text-cn-text-muted">
                         <div className="w-24 h-24 rounded-full bg-cn-surface flex items-center justify-center mb-4">
@@ -128,18 +224,42 @@ export default function VideoGrid({
                         </p>
                     </div>
                 ) : (
-                    <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6 gap-4">
-                        {filteredVideos.map((video, index) => (
-                            <VideoCard
-                                key={video.id}
-                                video={video}
-                                index={index}
-                                onPlay={() => onVideoPlay(video)}
-                                onToggleFavorite={() => onToggleFavorite(video.path)}
-                                onEdit={() => onVideoEdit(video)}
-                            />
-                        ))}
-                    </div>
+                    // ProxyAutoSizer and VirtualGrid should be valid at this point
+                    VirtualGrid && ProxyAutoSizer ? (
+                        <ProxyAutoSizer>
+                            {({ height, width }: { height: number; width: number }) => {
+                                // Prevent calculation errors if dimensions are 0
+                                if (height === 0 || width === 0) {
+                                    console.log('AutoSizer received 0 height or width, skipping render.')
+                                    return null
+                                }
+
+                                // Calculate columns
+                                const columnCount = Math.floor((width - GAP) / (CARD_MIN_WIDTH + GAP)) || 1
+                                const columnWidth = (width - GAP) / columnCount
+                                const rowCount = Math.ceil(filteredVideos.length / columnCount)
+
+                                return (
+                                    <VirtualGrid
+                                        columnCount={columnCount}
+                                        columnWidth={columnWidth}
+                                        height={height}
+                                        rowCount={rowCount}
+                                        rowHeight={CARD_HEIGHT + GAP}
+                                        width={width}
+                                        itemData={{ videos: filteredVideos, columnCount }}
+                                        className="scrollbar-thin scrollbar-thumb-cn-border scrollbar-track-transparent"
+                                    >
+                                        {Cell}
+                                    </VirtualGrid>
+                                )
+                            }}
+                        </ProxyAutoSizer>
+                    ) : (
+                        <div className="flex items-center justify-center h-full text-cn-error">
+                            コンポーネントの読み込みに失敗しました
+                        </div>
+                    )
                 )}
             </div>
         </div>
@@ -158,24 +278,13 @@ interface VideoCardProps {
 function VideoCard({ video, index, onPlay, onToggleFavorite, onEdit }: VideoCardProps): JSX.Element {
     const [imageError, setImageError] = useState(false)
     const [imageLoaded, setImageLoaded] = useState(false)
-    const [thumbnailDataUrl, setThumbnailDataUrl] = useState<string | null>(null)
-
-    // Load thumbnail via IPC
-    useEffect(() => {
-        if (video.thumbnailPath && !imageError) {
-            window.electron.getThumbnailData(video.thumbnailPath)
-                .then((dataUrl) => {
-                    if (dataUrl) {
-                        setThumbnailDataUrl(dataUrl)
-                    } else {
-                        setImageError(true)
-                    }
-                })
-                .catch(() => {
-                    setImageError(true)
-                })
-        }
-    }, [video.thumbnailPath, imageError])
+    // 変更: IPC経由でのデータ取得を廃止し、local-fileプロトコルを使用
+    const thumbnailUrl = useMemo(() => {
+        if (!video.thumbnailPath) return null
+        // Electronのカスタムプロトコル用にパスを正規化
+        const normalizedPath = video.thumbnailPath.replace(/\\/g, '/')
+        return `local-file:///${normalizedPath}`
+    }, [video.thumbnailPath])
 
     const handleContextMenu = (e: React.MouseEvent) => {
         e.preventDefault()
@@ -191,7 +300,7 @@ function VideoCard({ video, index, onPlay, onToggleFavorite, onEdit }: VideoCard
         >
             {/* Thumbnail - 16:9 Aspect Ratio */}
             <div className="relative aspect-video bg-gradient-to-br from-cn-surface to-cn-dark overflow-hidden">
-                {thumbnailDataUrl ? (
+                {thumbnailUrl && !imageError ? (
                     <>
                         {/* Loading placeholder */}
                         {!imageLoaded && (
@@ -200,12 +309,13 @@ function VideoCard({ video, index, onPlay, onToggleFavorite, onEdit }: VideoCard
                             </div>
                         )}
                         <img
-                            src={thumbnailDataUrl}
+                            src={thumbnailUrl}
                             alt={video.name}
                             className={`w-full h-full object-cover object-center transition-all duration-300 group-hover:scale-105 ${imageLoaded ? 'opacity-100' : 'opacity-0'
                                 }`}
                             onLoad={() => setImageLoaded(true)}
                             onError={() => setImageError(true)}
+                            loading="lazy"
                         />
                     </>
                 ) : (

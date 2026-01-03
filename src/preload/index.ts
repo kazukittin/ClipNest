@@ -12,12 +12,14 @@ export interface VideoFile {
     duration: number | null
     isFavorite: boolean
     tags: string[]
+    lastPlayedTime?: number
 }
 
 // Video metadata interface
 export interface VideoMetadata {
     isFavorite: boolean
     tags: string[]
+    lastPlayedTime?: number
 }
 
 // Watched folder interface
@@ -39,6 +41,7 @@ export interface ElectronAPI {
     // Metadata operations
     toggleFavorite: (filePath: string) => Promise<boolean>
     updateTags: (filePath: string, tags: string[]) => Promise<string[]>
+    updatePlaybackTime: (filePath: string, time: number) => Promise<void>
     getMetadata: (filePath: string) => Promise<VideoMetadata>
     // Watched folders operations
     getWatchedFolders: () => Promise<WatchedFolder[]>
@@ -68,6 +71,7 @@ const electronAPI: ElectronAPI = {
     // Metadata operations
     toggleFavorite: (filePath: string) => ipcRenderer.invoke('toggle-favorite', filePath),
     updateTags: (filePath: string, tags: string[]) => ipcRenderer.invoke('update-tags', filePath, tags),
+    updatePlaybackTime: (filePath: string, time: number) => ipcRenderer.invoke('update-playback-time', filePath, time),
     getMetadata: (filePath: string) => ipcRenderer.invoke('get-metadata', filePath),
     // Watched folders operations
     getWatchedFolders: () => ipcRenderer.invoke('get-watched-folders'),

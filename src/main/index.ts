@@ -51,6 +51,7 @@ const THUMBNAIL_SIZE = '320x?' // Scale to width 320, preserve aspect ratio
 interface VideoMetadata {
     isFavorite: boolean
     tags: string[]
+    lastPlayedTime?: number
 }
 
 interface VideoFile {
@@ -64,6 +65,7 @@ interface VideoFile {
     duration: number | null
     isFavorite: boolean
     tags: string[]
+    lastPlayedTime?: number
 }
 
 interface WatchedFolder {
@@ -332,7 +334,8 @@ ipcMain.handle('scan-folder-progressive', async (event, folderPath: string): Pro
                     thumbnailPath: thumbnailPath,
                     duration: duration,
                     isFavorite: metadata.isFavorite,
-                    tags: metadata.tags
+                    tags: metadata.tags,
+                    lastPlayedTime: metadata.lastPlayedTime
                 }
 
                 // Send the video file to renderer (check if window is still alive)
@@ -418,7 +421,8 @@ ipcMain.handle('scan-folder', async (_event, folderPath: string): Promise<VideoF
                     thumbnailPath: thumbnailPath,
                     duration: duration,
                     isFavorite: metadata.isFavorite,
-                    tags: metadata.tags
+                    tags: metadata.tags,
+                    lastPlayedTime: metadata.lastPlayedTime
                 })
             } catch (err) {
                 console.error(`Error processing file ${filePath}:`, err)
@@ -474,7 +478,8 @@ ipcMain.handle('get-video-info', async (_event, videoPath: string): Promise<Vide
             thumbnailPath: thumbnailPath,
             duration: duration,
             isFavorite: metadata.isFavorite,
-            tags: metadata.tags
+            tags: metadata.tags,
+            lastPlayedTime: metadata.lastPlayedTime
         }
     } catch (err) {
         console.error(`Error getting video info for ${videoPath}:`, err)
@@ -529,6 +534,13 @@ ipcMain.handle('update-tags', async (_event, filePath: string, tags: string[]): 
     saveVideoMetadata(filePath, metadata)
     console.log(`Tags updated for ${filePath}:`, tags)
     return metadata.tags
+})
+
+// Handler: Update playback time for a video
+ipcMain.handle('update-playback-time', async (_event, filePath: string, time: number): Promise<void> => {
+    const metadata = getVideoMetadata(filePath)
+    metadata.lastPlayedTime = time
+    saveVideoMetadata(filePath, metadata)
 })
 
 // Handler: Get metadata for a specific video
@@ -604,7 +616,7 @@ ipcMain.handle('delete-video', async (_event, filePath: string): Promise<{ succe
         try {
             const thumbnailsDir = await getThumbnailsDir()
             const pathHash = Buffer.from(filePath).toString('base64').replace(/[/+=]/g, '_').slice(0, 32)
-            
+
             // Try to delete both v1 and v2 thumbnails
             const thumbnailPaths = [
                 join(thumbnailsDir, `${pathHash}.jpg`),
@@ -681,12 +693,33 @@ app.whenReady().then(() => {
     // Register protocol handler for local-file://
     protocol.handle('local-file', async (request) => {
         try {
-            // Remove 'local-file:///' prefix and decode the path
-            let filePath = decodeURIComponent(request.url.replace('local-file:///', ''))
+            const url = new URL(request.url)
+            let filePath = decodeURIComponent(url.pathname)
+
+            // On Windows, if we have a hostname like 'c', it might be the drive letter
+            // URLs like local-file://c/Users/... result in hostname='c' and pathname='/Users/...'
+            if (url.hostname && url.hostname.length === 1 && /^[a-zA-Z]$/.test(url.hostname)) {
+                filePath = `${url.hostname}:${filePath}`
+            }
+
+            // If the path starts with /C:/..., remove the leading slash
+            if (filePath.startsWith('/') && /^\/[a-zA-Z]:/.test(filePath)) {
+                filePath = filePath.substring(1)
+            }
 
             console.log('Loading local file:', filePath)
 
             // Check if file exists
+            if (!existsSync(filePath)) {
+                // Try fallback: if it doesn't start with a drive letter, maybe it needs the leading slash removed anyway
+                if (filePath.startsWith('/')) {
+                    const fallbackPath = filePath.substring(1)
+                    if (existsSync(fallbackPath)) {
+                        filePath = fallbackPath
+                    }
+                }
+            }
+
             if (!existsSync(filePath)) {
                 console.error('File not found:', filePath)
                 return new Response('File not found', { status: 404 })

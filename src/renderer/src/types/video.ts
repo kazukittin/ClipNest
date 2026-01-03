@@ -10,6 +10,7 @@ export interface VideoFile {
     duration: number | null
     isFavorite: boolean
     tags: string[]
+    lastPlayedTime?: number
 }
 
 // Video type (same as VideoFile now that metadata is included)
@@ -19,6 +20,7 @@ export type Video = VideoFile
 export interface VideoMetadata {
     isFavorite: boolean
     tags: string[]
+    lastPlayedTime?: number
 }
 
 // Folder information
@@ -40,6 +42,7 @@ export interface ElectronAPI {
     // Metadata operations
     toggleFavorite: (filePath: string) => Promise<boolean>
     updateTags: (filePath: string, tags: string[]) => Promise<string[]>
+    updatePlaybackTime: (filePath: string, time: number) => Promise<void>
     getMetadata: (filePath: string) => Promise<VideoMetadata>
     // Watched folders operations
     getWatchedFolders: () => Promise<WatchedFolder[]>

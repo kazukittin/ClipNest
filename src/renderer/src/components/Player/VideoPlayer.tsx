@@ -28,10 +28,10 @@ interface VideoPlayerProps {
     onUpdateTags: (tags: string[]) => void
 }
 
-// Convert local path to file:// URL for video playback
+// Convert local path to local-file:// URL for video playback
 function toVideoUrl(path: string): string {
     const normalizedPath = path.replace(/\\/g, '/')
-    return `file:///${normalizedPath.replace(/^\//, '')}`
+    return `local-file:///${normalizedPath}`
 }
 
 export default function VideoPlayer({ video, onClose, onToggleFavorite, onUpdateTags }: VideoPlayerProps): JSX.Element {
@@ -74,6 +74,45 @@ export default function VideoPlayer({ video, onClose, onToggleFavorite, onUpdate
         feedbackTimeoutRef.current = setTimeout(() => setFeedback(null), 800)
     }, [])
 
+    // Generate callback to save playback time
+    const savePlaybackTime = useCallback(async () => {
+        if (videoRef.current) {
+            const time = videoRef.current.currentTime
+            // Only save if we have played something (> 1s) and not at the very end
+            if (time > 1 && duration > 0 && time < duration - 1) {
+                await window.electron.updatePlaybackTime(video.path, time)
+            } else if (time >= duration - 1) {
+                // If at the end, reset to 0
+                await window.electron.updatePlaybackTime(video.path, 0)
+            }
+        }
+    }, [video.path, duration])
+
+    // Wrapper for onClose to save time
+    const handleClose = useCallback(async () => {
+        await savePlaybackTime()
+        onClose()
+    }, [savePlaybackTime, onClose])
+
+    // Initial seek to last played time
+    useEffect(() => {
+        if (videoRef.current && video.lastPlayedTime && video.lastPlayedTime > 0) {
+            videoRef.current.currentTime = video.lastPlayedTime
+            setCurrentTime(video.lastPlayedTime)
+            showFeedback(<Play className="w-8 h-8" />, `続きから再生`)
+        }
+    }, [video.id]) // Run when video ID changes
+
+    // Periodic save
+    useEffect(() => {
+        const interval = setInterval(() => {
+            if (isPlaying) {
+                savePlaybackTime()
+            }
+        }, 5000)
+        return () => clearInterval(interval)
+    }, [isPlaying, savePlaybackTime])
+
     // Format time to mm:ss or hh:mm:ss
     const formatTime = (seconds: number): string => {
         if (!isFinite(seconds) || isNaN(seconds)) return '0:00'
@@ -93,6 +132,8 @@ export default function VideoPlayer({ video, onClose, onToggleFavorite, onUpdate
             if (isPlaying) {
                 videoRef.current.pause()
                 showFeedback(<Pause className="w-8 h-8" />)
+                // Save time on pause
+                savePlaybackTime()
             } else {
                 videoRef.current.play().catch(err => {
                     console.error('Playback error:', err)
@@ -101,7 +142,7 @@ export default function VideoPlayer({ video, onClose, onToggleFavorite, onUpdate
                 showFeedback(<Play className="w-8 h-8" />)
             }
         }
-    }, [isPlaying, videoError, showFeedback])
+    }, [isPlaying, videoError, showFeedback, savePlaybackTime])
 
     // Toggle mute
     const toggleMute = useCallback(() => {
@@ -174,10 +215,10 @@ export default function VideoPlayer({ video, onClose, onToggleFavorite, onUpdate
         if (e.target === e.currentTarget) {
             // Check if we are dragging, if so don't close
             if (!isDragging) {
-                onClose()
+                handleClose()
             }
         }
-    }, [onClose, isDragging])
+    }, [handleClose, isDragging])
 
     // Handle Double Click
     const handleDoubleClick = useCallback((e: React.MouseEvent) => {
@@ -233,7 +274,7 @@ export default function VideoPlayer({ video, onClose, onToggleFavorite, onUpdate
             switch (e.key) {
                 case 'Escape':
                     if (isFullscreen) document.exitFullscreen()
-                    else onClose()
+                    else handleClose()
                     break
                 case ' ':
                 case 'k':
@@ -275,7 +316,7 @@ export default function VideoPlayer({ video, onClose, onToggleFavorite, onUpdate
 
         window.addEventListener('keydown', handleKeyDown)
         return () => window.removeEventListener('keydown', handleKeyDown)
-    }, [isPlaying, isFullscreen, volume, togglePlay, toggleMute, toggleFullscreen, skip, changeVolume, onClose])
+    }, [isPlaying, isFullscreen, volume, togglePlay, toggleMute, toggleFullscreen, skip, changeVolume, handleClose])
 
     // Auto-hide controls
     useEffect(() => {
@@ -447,7 +488,7 @@ export default function VideoPlayer({ video, onClose, onToggleFavorite, onUpdate
                     <p className="text-xl font-bold mb-2">{videoError}</p>
                     <p className="text-white/60 mb-6 max-w-lg text-center truncate px-4">{video.path}</p>
                     <button
-                        onClick={onClose}
+                        onClick={handleClose}
                         className="px-6 py-2 bg-cn-accent rounded-lg hover:bg-cn-accent-hover transition-colors font-medium"
                     >
                         閉じる
@@ -465,13 +506,13 @@ export default function VideoPlayer({ video, onClose, onToggleFavorite, onUpdate
                         </span>
                         {video.tags.map(tag => (
                             <span key={tag} className="text-xs px-2 py-0.5 rounded-full bg-cn-accent/30 text-cn-accent border border-cn-accent/20">
-                                #{tag}
+                                # {tag}
                             </span>
                         ))}
                     </div>
                 </div>
                 <button
-                    onClick={onClose}
+                    onClick={handleClose}
                     className="p-2 rounded-full bg-black/20 text-white hover:bg-white/20 backdrop-blur-sm transition-colors"
                 >
                     <X className="w-6 h-6" />
