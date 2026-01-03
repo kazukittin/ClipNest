@@ -42,7 +42,7 @@ ffmpeg.setFfprobePath(getFFprobePath())
 // ========================================
 
 const VIDEO_EXTENSIONS = ['.mp4', '.mkv', '.mov', '.webm', '.avi', '.wmv', '.flv', '.m4v']
-const THUMBNAIL_SIZE = '320x180' // 16:9 aspect ratio
+const THUMBNAIL_SIZE = '320x?' // Scale to width 320, preserve aspect ratio
 
 // ========================================
 // Types
@@ -66,8 +66,15 @@ interface VideoFile {
     tags: string[]
 }
 
+interface WatchedFolder {
+    path: string
+    name: string
+    videoCount: number
+}
+
 interface StoreSchema {
     videoMetadata: Record<string, VideoMetadata>
+    watchedFolders: WatchedFolder[]
 }
 
 // ========================================
@@ -77,7 +84,8 @@ interface StoreSchema {
 const store = new Store<StoreSchema>({
     name: 'clipnest-data',
     defaults: {
-        videoMetadata: {}
+        videoMetadata: {},
+        watchedFolders: []
     }
 })
 
@@ -92,6 +100,38 @@ function saveVideoMetadata(filePath: string, metadata: VideoMetadata): void {
     const allMetadata = store.get('videoMetadata', {})
     allMetadata[filePath] = metadata
     store.set('videoMetadata', allMetadata)
+}
+
+// ========================================
+// Watched Folders Functions
+// ========================================
+
+// Get watched folders
+function getWatchedFolders(): WatchedFolder[] {
+    return store.get('watchedFolders', [])
+}
+
+// Save watched folders
+function saveWatchedFolders(folders: WatchedFolder[]): void {
+    store.set('watchedFolders', folders)
+}
+
+// Add a watched folder
+function addWatchedFolder(folder: WatchedFolder): void {
+    const folders = getWatchedFolders()
+    const existingIndex = folders.findIndex(f => f.path === folder.path)
+    if (existingIndex >= 0) {
+        folders[existingIndex] = folder
+    } else {
+        folders.push(folder)
+    }
+    saveWatchedFolders(folders)
+}
+
+// Remove a watched folder
+function removeWatchedFolder(folderPath: string): void {
+    const folders = getWatchedFolders().filter(f => f.path !== folderPath)
+    saveWatchedFolders(folders)
 }
 
 // ========================================
@@ -134,7 +174,7 @@ async function generateThumbnail(
     thumbnailsDir: string
 ): Promise<string | null> {
     return new Promise((resolve) => {
-        const thumbnailFilename = `${videoId}.jpg`
+        const thumbnailFilename = `${videoId}_v2.jpg`
         const thumbnailPath = join(thumbnailsDir, thumbnailFilename)
 
         ffmpeg(videoPath)
@@ -170,8 +210,10 @@ async function thumbnailExists(thumbnailPath: string): Promise<boolean> {
 // Window Creation
 // ========================================
 
+let mainWindow: BrowserWindow | null = null
+
 function createWindow(): void {
-    const mainWindow = new BrowserWindow({
+    mainWindow = new BrowserWindow({
         width: 1400,
         height: 900,
         minWidth: 1000,
@@ -179,7 +221,7 @@ function createWindow(): void {
         show: false,
         autoHideMenuBar: true,
         backgroundColor: '#0d0d0d',
-        titleBarStyle: 'hiddenInset',
+        titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'hidden',
         frame: process.platform === 'darwin',
         webPreferences: {
             preload: join(__dirname, '../preload/index.js'),
@@ -192,7 +234,7 @@ function createWindow(): void {
     })
 
     mainWindow.on('ready-to-show', () => {
-        mainWindow.show()
+        mainWindow?.show()
     })
 
     mainWindow.webContents.setWindowOpenHandler((details) => {
@@ -226,7 +268,100 @@ ipcMain.handle('select-folder', async (): Promise<string | null> => {
     return result.filePaths[0]
 })
 
-// Handler: Scan folder for video files with thumbnail generation
+// Handler: Scan folder for video files (PROGRESSIVE - sends events for each video)
+ipcMain.handle('scan-folder-progressive', async (event, folderPath: string): Promise<{ totalFiles: number }> => {
+    try {
+        const files = await readdir(folderPath)
+        const thumbnailsDir = await getThumbnailsDir()
+
+        // Filter video files first
+        const videoFileNames: string[] = []
+        for (const file of files) {
+            const extension = extname(file).toLowerCase()
+            if (VIDEO_EXTENSIONS.includes(extension)) {
+                const filePath = join(folderPath, file)
+                try {
+                    const fileStat = await stat(filePath)
+                    if (!fileStat.isDirectory()) {
+                        videoFileNames.push(file)
+                    }
+                } catch {
+                    // Skip files we can't stat
+                }
+            }
+        }
+
+        const totalFiles = videoFileNames.length
+
+        // Process each video file and send to renderer as it completes
+        for (const file of videoFileNames) {
+            const filePath = join(folderPath, file)
+            const extension = extname(file).toLowerCase()
+
+            try {
+                const fileStat = await stat(filePath)
+                const videoId = randomUUID()
+                const videoName = basename(file, extension)
+
+                // Check if thumbnail already exists (using path hash for caching)
+                const pathHash = Buffer.from(filePath).toString('base64').replace(/[/+=]/g, '_').slice(0, 32)
+                const cachedThumbnailPath = join(thumbnailsDir, `${pathHash}_v2.jpg`)
+
+                let thumbnailPath: string | null = null
+
+                if (await thumbnailExists(cachedThumbnailPath)) {
+                    thumbnailPath = cachedThumbnailPath
+                } else {
+                    // Generate new thumbnail
+                    thumbnailPath = await generateThumbnail(filePath, pathHash, thumbnailsDir)
+                }
+
+                // Get video duration
+                const duration = await getVideoDuration(filePath)
+
+                // Get saved metadata
+                const metadata = getVideoMetadata(filePath)
+
+                const videoFile: VideoFile = {
+                    id: videoId,
+                    name: videoName,
+                    path: filePath,
+                    size: fileStat.size,
+                    createdAt: fileStat.birthtime.toISOString(),
+                    extension: extension,
+                    thumbnailPath: thumbnailPath,
+                    duration: duration,
+                    isFavorite: metadata.isFavorite,
+                    tags: metadata.tags
+                }
+
+                // Send the video file to renderer (check if window is still alive)
+                if (!event.sender.isDestroyed()) {
+                    event.sender.send('video-file-ready', videoFile)
+                } else {
+                    // Window is gone, stop processing
+                    return { totalFiles }
+                }
+
+            } catch (err) {
+                console.error(`Error processing file ${filePath}:`, err)
+            }
+        }
+
+        // Signal that scanning is complete (check if window is still alive)
+        if (!event.sender.isDestroyed()) {
+            event.sender.send('scan-folder-complete', folderPath)
+        }
+
+        return { totalFiles }
+    } catch (err) {
+        console.error(`Error scanning folder ${folderPath}:`, err)
+        event.sender.send('scan-folder-complete', folderPath)
+        return { totalFiles: 0 }
+    }
+})
+
+// Legacy Handler: Scan folder for video files with thumbnail generation (returns all at once)
 ipcMain.handle('scan-folder', async (_event, folderPath: string): Promise<VideoFile[]> => {
     try {
         const files = await readdir(folderPath)
@@ -399,6 +534,107 @@ ipcMain.handle('update-tags', async (_event, filePath: string, tags: string[]): 
 // Handler: Get metadata for a specific video
 ipcMain.handle('get-metadata', async (_event, filePath: string): Promise<VideoMetadata> => {
     return getVideoMetadata(filePath)
+})
+
+// ========================================
+// Watched Folders IPC Handlers
+// ========================================
+
+// Handler: Get all watched folders
+ipcMain.handle('get-watched-folders', async (): Promise<WatchedFolder[]> => {
+    return getWatchedFolders()
+})
+
+// Handler: Save a watched folder
+ipcMain.handle('save-watched-folder', async (_event, folder: WatchedFolder): Promise<void> => {
+    addWatchedFolder(folder)
+    console.log(`Saved watched folder: ${folder.path}`)
+})
+
+// Handler: Remove a watched folder
+ipcMain.handle('remove-watched-folder', async (_event, folderPath: string): Promise<void> => {
+    removeWatchedFolder(folderPath)
+    console.log(`Removed watched folder: ${folderPath}`)
+})
+
+// ========================================
+// File Operations IPC Handlers
+// ========================================
+
+// Handler: Rename a video file
+ipcMain.handle('rename-video', async (_event, oldPath: string, newName: string): Promise<{ success: boolean, newPath: string | null, error?: string }> => {
+    try {
+        const { rename } = await import('fs/promises')
+        const dir = join(oldPath, '..')
+        const extension = extname(oldPath)
+        const newPath = join(dir, `${newName}${extension}`)
+
+        // Check if new path already exists
+        if (existsSync(newPath) && newPath !== oldPath) {
+            return { success: false, newPath: null, error: '同じ名前のファイルが既に存在します' }
+        }
+
+        await rename(oldPath, newPath)
+
+        // Migrate metadata to new path
+        const metadata = getVideoMetadata(oldPath)
+        if (metadata.isFavorite || metadata.tags.length > 0) {
+            saveVideoMetadata(newPath, metadata)
+            // Remove old metadata
+            const allMetadata = store.get('videoMetadata', {})
+            delete allMetadata[oldPath]
+            store.set('videoMetadata', allMetadata)
+        }
+
+        console.log(`Renamed video: ${oldPath} -> ${newPath}`)
+        return { success: true, newPath }
+    } catch (error) {
+        console.error('Error renaming video:', error)
+        return { success: false, newPath: null, error: 'ファイル名の変更に失敗しました' }
+    }
+})
+
+// Handler: Delete a video file (move to trash)
+ipcMain.handle('delete-video', async (_event, filePath: string): Promise<{ success: boolean, error?: string }> => {
+    try {
+        // Use shell.trashItem to move to trash/recycle bin
+        await shell.trashItem(filePath)
+
+        // Remove metadata
+        const allMetadata = store.get('videoMetadata', {})
+        delete allMetadata[filePath]
+        store.set('videoMetadata', allMetadata)
+
+        console.log(`Deleted video (moved to trash): ${filePath}`)
+        return { success: true }
+    } catch (error) {
+        console.error('Error deleting video:', error)
+        return { success: false, error: 'ファイルの削除に失敗しました' }
+    }
+})
+
+// ========================================
+// Window Control IPC Handlers
+// ========================================
+
+ipcMain.on('window-minimize', () => {
+    mainWindow?.minimize()
+})
+
+ipcMain.on('window-maximize', () => {
+    if (mainWindow?.isMaximized()) {
+        mainWindow.unmaximize()
+    } else {
+        mainWindow?.maximize()
+    }
+})
+
+ipcMain.on('window-close', () => {
+    mainWindow?.close()
+})
+
+ipcMain.handle('is-window-maximized', async () => {
+    return mainWindow?.isMaximized() || false
 })
 
 // ========================================

@@ -52,7 +52,7 @@ export default function Sidebar({
                     </div>
                     <div>
                         <h1 className="text-lg font-bold text-cn-text">ClipNest</h1>
-                        <p className="text-[10px] text-cn-text-muted leading-none">Video Manager</p>
+                        <p className="text-[10px] text-cn-text-muted leading-none">動画マネージャー</p>
                     </div>
                 </div>
             </div>
@@ -63,7 +63,7 @@ export default function Sidebar({
                     <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-cn-text-muted" />
                     <input
                         type="text"
-                        placeholder="Search videos..."
+                        placeholder="動画を検索..."
                         value={searchQuery}
                         onChange={(e) => onSearchChange(e.target.value)}
                         className="input pl-9 py-2 text-sm"
@@ -77,24 +77,24 @@ export default function Sidebar({
                 <button
                     onClick={() => onFolderSelect(null)}
                     className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all duration-200 ${!selectedFolder && !selectedTag && !showFavorites
-                            ? 'bg-cn-accent text-white shadow-lg shadow-cn-accent/20'
-                            : 'hover:bg-cn-surface-hover text-cn-text'
+                        ? 'bg-cn-accent text-white shadow-lg shadow-cn-accent/20'
+                        : 'hover:bg-cn-surface-hover text-cn-text'
                         }`}
                 >
                     <Home className="w-4 h-4" />
-                    <span className="text-sm font-medium">All Videos</span>
+                    <span className="text-sm font-medium">すべての動画</span>
                 </button>
 
                 {/* Favorites */}
                 <button
                     onClick={onFavoritesToggle}
                     className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all duration-200 ${showFavorites
-                            ? 'bg-cn-accent text-white shadow-lg shadow-cn-accent/20'
-                            : 'hover:bg-cn-surface-hover text-cn-text'
+                        ? 'bg-cn-accent text-white shadow-lg shadow-cn-accent/20'
+                        : 'hover:bg-cn-surface-hover text-cn-text'
                         }`}
                 >
                     <Heart className={`w-4 h-4 ${showFavorites ? 'fill-current' : ''}`} />
-                    <span className="text-sm font-medium">Favorites</span>
+                    <span className="text-sm font-medium">お気に入り</span>
                 </button>
 
                 {/* Folders Section */}
@@ -110,7 +110,7 @@ export default function Sidebar({
                                 <ChevronRight className="w-4 h-4" />
                             )}
                             <FolderOpen className="w-4 h-4" />
-                            <span className="text-xs font-semibold uppercase tracking-wider">Folders</span>
+                            <span className="text-xs font-semibold uppercase tracking-wider">フォルダ</span>
                         </div>
                         <span className="text-xs text-cn-text-muted">{watchedFolders.length}</span>
                     </button>
@@ -125,7 +125,7 @@ export default function Sidebar({
                   text-cn-text-muted hover:text-cn-accent group"
                             >
                                 <FolderPlus className="w-4 h-4 group-hover:scale-110 transition-transform" />
-                                <span>Import Folder</span>
+                                <span>フォルダを追加</span>
                             </button>
 
                             {/* Folder List */}
@@ -134,8 +134,8 @@ export default function Sidebar({
                                     key={folder.path}
                                     onClick={() => onFolderSelect(folder.path)}
                                     className={`w-full flex items-center justify-between px-3 py-2 rounded-lg text-sm transition-all duration-200 ${selectedFolder === folder.path
-                                            ? 'bg-cn-accent/20 text-cn-accent'
-                                            : 'hover:bg-cn-surface-hover text-cn-text'
+                                        ? 'bg-cn-accent/20 text-cn-accent'
+                                        : 'hover:bg-cn-surface-hover text-cn-text'
                                         }`}
                                 >
                                     <div className="flex items-center gap-2 min-w-0">
@@ -150,7 +150,7 @@ export default function Sidebar({
 
                             {watchedFolders.length === 0 && (
                                 <p className="px-3 py-2 text-xs text-cn-text-muted italic text-center">
-                                    No folders imported
+                                    フォルダがありません
                                 </p>
                             )}
                         </div>
@@ -170,7 +170,7 @@ export default function Sidebar({
                                 <ChevronRight className="w-4 h-4" />
                             )}
                             <Tag className="w-4 h-4" />
-                            <span className="text-xs font-semibold uppercase tracking-wider">Tags</span>
+                            <span className="text-xs font-semibold uppercase tracking-wider">タグ</span>
                         </div>
                         <span className="text-xs text-cn-text-muted">{tags.length}</span>
                     </button>
@@ -179,7 +179,7 @@ export default function Sidebar({
                         <div className="mt-1 space-y-0.5 animate-fade-in">
                             {tags.length === 0 ? (
                                 <p className="px-3 py-2 text-xs text-cn-text-muted italic text-center">
-                                    No tags yet
+                                    タグがありません
                                 </p>
                             ) : (
                                 tags.map((tag) => (
@@ -187,8 +187,8 @@ export default function Sidebar({
                                         key={tag}
                                         onClick={() => onTagSelect(tag)}
                                         className={`w-full flex items-center gap-2 px-3 py-2 rounded-lg text-sm transition-all duration-200 ${selectedTag === tag
-                                                ? 'bg-cn-accent/20 text-cn-accent'
-                                                : 'hover:bg-cn-surface-hover text-cn-text'
+                                            ? 'bg-cn-accent/20 text-cn-accent'
+                                            : 'hover:bg-cn-surface-hover text-cn-text'
                                             }`}
                                     >
                                         <span className="w-2 h-2 rounded-full bg-cn-accent flex-shrink-0" />

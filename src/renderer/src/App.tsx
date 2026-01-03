@@ -1,7 +1,9 @@
-import { useState, useCallback, useEffect } from 'react'
+import { useState, useCallback, useEffect, useRef } from 'react'
 import Sidebar from './components/Sidebar/Sidebar'
 import VideoGrid from './components/VideoGrid/VideoGrid'
 import VideoPlayer from './components/Player/VideoPlayer'
+import VideoEditModal from './components/VideoEdit/VideoEditModal'
+import TitleBar from './components/TitleBar/TitleBar'
 import { Video, WatchedFolder } from './types/video'
 import { FolderPlus } from 'lucide-react'
 
@@ -11,6 +13,7 @@ function App(): JSX.Element {
     const [videos, setVideos] = useState<Video[]>([])
     const [isLoading, setIsLoading] = useState(false)
     const [loadingMessage, setLoadingMessage] = useState('')
+    const [isInitialized, setIsInitialized] = useState(false)
 
     // State for filters
     const [selectedFolder, setSelectedFolder] = useState<string | null>(null)
@@ -21,50 +24,141 @@ function App(): JSX.Element {
     // State for video player
     const [playingVideo, setPlayingVideo] = useState<Video | null>(null)
 
+    // State for video editing
+    const [editingVideo, setEditingVideo] = useState<Video | null>(null)
+
     // State for drag and drop
     const [isDragging, setIsDragging] = useState(false)
     const [dragCounter, setDragCounter] = useState(0)
 
-    // Common function to import a folder by path
+    // Track folders being scanned
+    const scanningFoldersRef = useRef<Set<string>>(new Set())
+
+    // Set up event listeners for progressive loading
+    useEffect(() => {
+        // When a video file is ready, add it to the list
+        const removeVideoFileReadyListener = window.electron.onVideoFileReady((video) => {
+            setVideos(prev => {
+                // Avoid duplicates
+                const exists = prev.some(v => v.path === video.path)
+                if (exists) {
+                    return prev.map(v => v.path === video.path ? video : v)
+                }
+                // Add new video and sort by name
+                const updated = [...prev, video]
+                updated.sort((a, b) => a.name.localeCompare(b.name))
+                return updated
+            })
+        })
+
+        // When scanning is complete
+        const removeScanCompleteListener = window.electron.onScanFolderComplete((folderPath) => {
+            console.log(`Scan complete for: ${folderPath}`)
+            scanningFoldersRef.current.delete(folderPath)
+
+            // If no more folders are being scanned, hide loading
+            if (scanningFoldersRef.current.size === 0) {
+                setIsLoading(false)
+                setLoadingMessage('')
+            }
+        })
+
+        return () => {
+            removeVideoFileReadyListener()
+            removeScanCompleteListener()
+        }
+    }, [])
+
+    // Load saved folders on app startup
+    useEffect(() => {
+        const loadSavedFolders = async () => {
+            try {
+                const savedFolders = await window.electron.getWatchedFolders()
+                console.log('Loaded saved folders:', savedFolders)
+
+                if (savedFolders.length > 0) {
+                    setWatchedFolders(savedFolders)
+                    setIsLoading(true)
+                    setLoadingMessage('保存されたフォルダを読み込み中...')
+
+                    // Scan each saved folder progressively
+                    for (const folder of savedFolders) {
+                        scanningFoldersRef.current.add(folder.path)
+                        try {
+                            const result = await window.electron.scanFolderProgressive(folder.path)
+                            // Update folder video count
+                            setWatchedFolders(prev =>
+                                prev.map(f =>
+                                    f.path === folder.path
+                                        ? { ...f, videoCount: result.totalFiles }
+                                        : f
+                                )
+                            )
+                            // Save updated count
+                            await window.electron.saveWatchedFolder({
+                                ...folder,
+                                videoCount: result.totalFiles
+                            })
+                        } catch (error) {
+                            console.error(`Error scanning saved folder ${folder.path}:`, error)
+                            scanningFoldersRef.current.delete(folder.path)
+                        }
+                    }
+                }
+            } catch (error) {
+                console.error('Error loading saved folders:', error)
+            } finally {
+                setIsInitialized(true)
+            }
+        }
+
+        loadSavedFolders()
+    }, [])
+
+    // Common function to import a folder by path (PROGRESSIVE)
     const importFolderByPath = useCallback(async (folderPath: string) => {
         try {
             setIsLoading(true)
-            setLoadingMessage('Scanning folder...')
-
-            // Scan the folder for video files (this will generate thumbnails)
-            const videoFiles = await window.electron.scanFolder(folderPath)
+            setLoadingMessage('フォルダをスキャン中...')
 
             // Extract folder name from path
             const folderName = folderPath.split(/[\\/]/).pop() || folderPath
 
-            // Add to watched folders if not already present
+            const newFolder: WatchedFolder = {
+                path: folderPath,
+                name: folderName,
+                videoCount: 0
+            }
+
+            // Add to watched folders immediately
             setWatchedFolders(prev => {
                 const exists = prev.some(f => f.path === folderPath)
                 if (exists) {
-                    return prev.map(f =>
-                        f.path === folderPath
-                            ? { ...f, videoCount: videoFiles.length }
-                            : f
-                    )
+                    return prev
                 }
-                return [...prev, {
-                    path: folderPath,
-                    name: folderName,
-                    videoCount: videoFiles.length
-                }]
+                return [...prev, newFolder]
             })
 
-            // Add videos (avoid duplicates)
-            setVideos(prev => {
-                const existingPaths = new Set(prev.map(v => v.path))
-                const newVideos = videoFiles.filter(f => !existingPaths.has(f.path))
-                return [...prev, ...newVideos]
-            })
+            // Track this folder as being scanned
+            scanningFoldersRef.current.add(folderPath)
 
-            setLoadingMessage('')
-            setIsLoading(false)
+            // Start progressive scanning
+            const result = await window.electron.scanFolderProgressive(folderPath)
+
+            // Update folder video count
+            const updatedFolder = { ...newFolder, videoCount: result.totalFiles }
+            setWatchedFolders(prev =>
+                prev.map(f =>
+                    f.path === folderPath ? updatedFolder : f
+                )
+            )
+
+            // Save to persistent storage
+            await window.electron.saveWatchedFolder(updatedFolder)
+
         } catch (error) {
             console.error('Error importing folder:', error)
+            scanningFoldersRef.current.delete(folderPath)
             setLoadingMessage('')
             setIsLoading(false)
         }
@@ -206,8 +300,47 @@ function App(): JSX.Element {
                 }
                 return prev
             })
+
+            setEditingVideo(prev => {
+                if (prev && prev.path === videoPath) {
+                    return { ...prev, tags: newTags }
+                }
+                return prev
+            })
         } catch (error) {
             console.error('Error updating tags:', error)
+        }
+    }, [])
+
+    // Handle video rename
+    const handleRenameVideo = useCallback(async (oldPath: string, newName: string) => {
+        try {
+            const result = await window.electron.renameVideo(oldPath, newName)
+            if (result.success && result.newPath) {
+                setVideos(prev => prev.map(v =>
+                    v.path === oldPath ? { ...v, name: newName, path: result.newPath! } : v
+                ))
+                setEditingVideo(null)
+            } else {
+                alert(result.error || 'ファイル名の変更に失敗しました')
+            }
+        } catch (error) {
+            console.error('Error renaming video:', error)
+        }
+    }, [])
+
+    // Handle video delete
+    const handleDeleteVideo = useCallback(async (videoPath: string) => {
+        try {
+            const result = await window.electron.deleteVideo(videoPath)
+            if (result.success) {
+                setVideos(prev => prev.filter(v => v.path !== videoPath))
+                setEditingVideo(null)
+            } else {
+                alert(result.error || 'ファイルの削除に失敗しました')
+            }
+        } catch (error) {
+            console.error('Error deleting video:', error)
         }
     }, [])
 
@@ -216,41 +349,47 @@ function App(): JSX.Element {
 
     return (
         <div
-            className="flex h-screen w-screen overflow-hidden bg-cn-dark relative"
+            className="flex flex-col h-screen w-screen overflow-hidden bg-cn-dark relative"
             onDragEnter={handleDragEnter}
             onDragLeave={handleDragLeave}
             onDragOver={handleDragOver}
             onDrop={handleDrop}
         >
-            {/* Sidebar */}
-            <Sidebar
-                watchedFolders={watchedFolders}
-                tags={allTags}
-                selectedFolder={selectedFolder}
-                selectedTag={selectedTag}
-                showFavorites={showFavorites}
-                onFolderSelect={handleFolderSelect}
-                onTagSelect={handleTagSelect}
-                onFavoritesToggle={handleFavoritesToggle}
-                onImportFolder={handleImportFolder}
-                searchQuery={searchQuery}
-                onSearchChange={setSearchQuery}
-            />
+            {/* Custom Title Bar */}
+            <TitleBar />
 
-            {/* Main Content */}
-            <main className="flex-1 flex flex-col overflow-hidden">
-                <VideoGrid
-                    videos={videos}
+            <div className="flex flex-1 overflow-hidden">
+                {/* Sidebar */}
+                <Sidebar
+                    watchedFolders={watchedFolders}
+                    tags={allTags}
                     selectedFolder={selectedFolder}
                     selectedTag={selectedTag}
                     showFavorites={showFavorites}
+                    onFolderSelect={handleFolderSelect}
+                    onTagSelect={handleTagSelect}
+                    onFavoritesToggle={handleFavoritesToggle}
+                    onImportFolder={handleImportFolder}
                     searchQuery={searchQuery}
-                    isLoading={isLoading}
-                    loadingMessage={loadingMessage}
-                    onVideoPlay={setPlayingVideo}
-                    onToggleFavorite={handleToggleFavorite}
+                    onSearchChange={setSearchQuery}
                 />
-            </main>
+
+                {/* Main Content */}
+                <main className="flex-1 flex flex-col overflow-hidden">
+                    <VideoGrid
+                        videos={videos}
+                        selectedFolder={selectedFolder}
+                        selectedTag={selectedTag}
+                        showFavorites={showFavorites}
+                        searchQuery={searchQuery}
+                        isLoading={isLoading}
+                        loadingMessage={loadingMessage}
+                        onVideoPlay={setPlayingVideo}
+                        onToggleFavorite={handleToggleFavorite}
+                        onVideoEdit={setEditingVideo}
+                    />
+                </main>
+            </div>
 
             {/* Video Player Modal */}
             {playingVideo && (
@@ -259,6 +398,23 @@ function App(): JSX.Element {
                     onClose={() => setPlayingVideo(null)}
                     onToggleFavorite={() => handleToggleFavorite(playingVideo.path)}
                     onUpdateTags={(tags) => handleUpdateTags(playingVideo.path, tags)}
+                />
+            )}
+
+            {/* Video Edit Modal */}
+            {editingVideo && (
+                <VideoEditModal
+                    video={editingVideo}
+                    onClose={() => setEditingVideo(null)}
+                    onSave={(newName, newTags) => {
+                        handleUpdateTags(editingVideo.path, newTags)
+                        if (newName !== editingVideo.name) {
+                            handleRenameVideo(editingVideo.path, newName)
+                        } else {
+                            setEditingVideo(null)
+                        }
+                    }}
+                    onDelete={() => handleDeleteVideo(editingVideo.path)}
                 />
             )}
 

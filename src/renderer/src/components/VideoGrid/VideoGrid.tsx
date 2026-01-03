@@ -12,6 +12,7 @@ interface VideoGridProps {
     loadingMessage?: string
     onVideoPlay: (video: Video) => void
     onToggleFavorite: (videoPath: string) => void
+    onVideoEdit: (video: Video) => void
 }
 
 // Format file size to human readable
@@ -50,7 +51,8 @@ export default function VideoGrid({
     isLoading,
     loadingMessage,
     onVideoPlay,
-    onToggleFavorite
+    onToggleFavorite,
+    onVideoEdit
 }: VideoGridProps): JSX.Element {
     // Filter videos based on current selection
     const filteredVideos = useMemo(() => {
@@ -85,10 +87,10 @@ export default function VideoGrid({
 
     // Get header title
     const getTitle = () => {
-        if (showFavorites) return 'Favorites'
-        if (selectedTag) return `Tag: ${selectedTag}`
-        if (selectedFolder) return selectedFolder.split(/[\\/]/).pop() || 'Folder'
-        return 'All Videos'
+        if (showFavorites) return 'お気に入り'
+        if (selectedTag) return `タグ: ${selectedTag}`
+        if (selectedFolder) return selectedFolder.split(/[\\/]/).pop() || 'フォルダ'
+        return 'すべての動画'
     }
 
     return (
@@ -98,11 +100,11 @@ export default function VideoGrid({
                 <div>
                     <h2 className="text-xl font-semibold text-cn-text">{getTitle()}</h2>
                     <p className="text-sm text-cn-text-muted mt-0.5">
-                        {filteredVideos.length} video{filteredVideos.length !== 1 ? 's' : ''}
+                        {filteredVideos.length} 件の動画
                         {isLoading && (
                             <span className="ml-2 inline-flex items-center gap-1.5 text-cn-accent">
                                 <Loader2 className="w-3 h-3 animate-spin" />
-                                <span>{loadingMessage || 'Loading...'}</span>
+                                <span>{loadingMessage || '読み込み中...'}</span>
                             </span>
                         )}
                     </p>
@@ -116,13 +118,13 @@ export default function VideoGrid({
                         <div className="w-24 h-24 rounded-full bg-cn-surface flex items-center justify-center mb-4">
                             <Film className="w-12 h-12 opacity-30" />
                         </div>
-                        <p className="text-lg font-medium">No videos found</p>
+                        <p className="text-lg font-medium">動画が見つかりません</p>
                         <p className="text-sm mt-1 text-center max-w-xs">
                             {searchQuery
-                                ? 'Try a different search term'
+                                ? '別の検索キーワードをお試しください'
                                 : videos.length === 0
-                                    ? 'Click "Import Folder" in the sidebar to add videos'
-                                    : 'No videos match the current filter'}
+                                    ? 'サイドバーの「フォルダを追加」から動画を追加してください'
+                                    : '現在のフィルタに一致する動画がありません'}
                         </p>
                     </div>
                 ) : (
@@ -134,6 +136,7 @@ export default function VideoGrid({
                                 index={index}
                                 onPlay={() => onVideoPlay(video)}
                                 onToggleFavorite={() => onToggleFavorite(video.path)}
+                                onEdit={() => onVideoEdit(video)}
                             />
                         ))}
                     </div>
@@ -149,9 +152,10 @@ interface VideoCardProps {
     index: number
     onPlay: () => void
     onToggleFavorite: () => void
+    onEdit: () => void
 }
 
-function VideoCard({ video, index, onPlay, onToggleFavorite }: VideoCardProps): JSX.Element {
+function VideoCard({ video, index, onPlay, onToggleFavorite, onEdit }: VideoCardProps): JSX.Element {
     const [imageError, setImageError] = useState(false)
     const [imageLoaded, setImageLoaded] = useState(false)
     const [thumbnailDataUrl, setThumbnailDataUrl] = useState<string | null>(null)
@@ -173,11 +177,17 @@ function VideoCard({ video, index, onPlay, onToggleFavorite }: VideoCardProps): 
         }
     }, [video.thumbnailPath, imageError])
 
+    const handleContextMenu = (e: React.MouseEvent) => {
+        e.preventDefault()
+        onEdit()
+    }
+
     return (
         <div
             className="video-card group animate-fade-in"
             style={{ animationDelay: `${Math.min(index * 30, 300)}ms` }}
             onClick={onPlay}
+            onContextMenu={handleContextMenu}
         >
             {/* Thumbnail - 16:9 Aspect Ratio */}
             <div className="relative aspect-video bg-gradient-to-br from-cn-surface to-cn-dark overflow-hidden">
@@ -192,7 +202,7 @@ function VideoCard({ video, index, onPlay, onToggleFavorite }: VideoCardProps): 
                         <img
                             src={thumbnailDataUrl}
                             alt={video.name}
-                            className={`w-full h-full object-cover transition-all duration-300 group-hover:scale-105 ${imageLoaded ? 'opacity-100' : 'opacity-0'
+                            className={`w-full h-full object-cover object-center transition-all duration-300 group-hover:scale-105 ${imageLoaded ? 'opacity-100' : 'opacity-0'
                                 }`}
                             onLoad={() => setImageLoaded(true)}
                             onError={() => setImageError(true)}

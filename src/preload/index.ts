@@ -20,11 +20,19 @@ export interface VideoMetadata {
     tags: string[]
 }
 
+// Watched folder interface
+export interface WatchedFolder {
+    path: string
+    name: string
+    videoCount: number
+}
+
 // Electron API interface
 export interface ElectronAPI {
     // Folder operations
     selectFolder: () => Promise<string | null>
     scanFolder: (folderPath: string) => Promise<VideoFile[]>
+    scanFolderProgressive: (folderPath: string) => Promise<{ totalFiles: number }>
     getVideoInfo: (videoPath: string) => Promise<VideoFile | null>
     getThumbnailsDir: () => Promise<string>
     getThumbnailData: (thumbnailPath: string) => Promise<string | null>
@@ -32,19 +40,60 @@ export interface ElectronAPI {
     toggleFavorite: (filePath: string) => Promise<boolean>
     updateTags: (filePath: string, tags: string[]) => Promise<string[]>
     getMetadata: (filePath: string) => Promise<VideoMetadata>
+    // Watched folders operations
+    getWatchedFolders: () => Promise<WatchedFolder[]>
+    saveWatchedFolder: (folder: WatchedFolder) => Promise<void>
+    removeWatchedFolder: (folderPath: string) => Promise<void>
+    // File operations
+    renameVideo: (oldPath: string, newName: string) => Promise<{ success: boolean, newPath: string | null, error?: string }>
+    deleteVideo: (filePath: string) => Promise<{ success: boolean, error?: string }>
+    // Window control operations
+    minimizeWindow: () => void
+    maximizeWindow: () => void
+    closeWindow: () => void
+    isWindowMaximized: () => Promise<boolean>
+    // Event listeners
+    onVideoFileReady: (callback: (video: VideoFile) => void) => () => void
+    onScanFolderComplete: (callback: (folderPath: string) => void) => () => void
 }
 
 // Create the API object
 const electronAPI: ElectronAPI = {
     selectFolder: () => ipcRenderer.invoke('select-folder'),
     scanFolder: (folderPath: string) => ipcRenderer.invoke('scan-folder', folderPath),
+    scanFolderProgressive: (folderPath: string) => ipcRenderer.invoke('scan-folder-progressive', folderPath),
     getVideoInfo: (videoPath: string) => ipcRenderer.invoke('get-video-info', videoPath),
     getThumbnailsDir: () => ipcRenderer.invoke('get-thumbnails-dir'),
     getThumbnailData: (thumbnailPath: string) => ipcRenderer.invoke('get-thumbnail-data', thumbnailPath),
     // Metadata operations
     toggleFavorite: (filePath: string) => ipcRenderer.invoke('toggle-favorite', filePath),
     updateTags: (filePath: string, tags: string[]) => ipcRenderer.invoke('update-tags', filePath, tags),
-    getMetadata: (filePath: string) => ipcRenderer.invoke('get-metadata', filePath)
+    getMetadata: (filePath: string) => ipcRenderer.invoke('get-metadata', filePath),
+    // Watched folders operations
+    getWatchedFolders: () => ipcRenderer.invoke('get-watched-folders'),
+    saveWatchedFolder: (folder: WatchedFolder) => ipcRenderer.invoke('save-watched-folder', folder),
+    removeWatchedFolder: (folderPath: string) => ipcRenderer.invoke('remove-watched-folder', folderPath),
+    // File operations
+    renameVideo: (oldPath: string, newName: string) => ipcRenderer.invoke('rename-video', oldPath, newName),
+    deleteVideo: (filePath: string) => ipcRenderer.invoke('delete-video', filePath),
+    // Window control operations
+    minimizeWindow: () => ipcRenderer.send('window-minimize'),
+    maximizeWindow: () => ipcRenderer.send('window-maximize'),
+    closeWindow: () => ipcRenderer.send('window-close'),
+    isWindowMaximized: () => ipcRenderer.invoke('is-window-maximized'),
+    // Event listeners for progressive loading
+    onVideoFileReady: (callback: (video: VideoFile) => void) => {
+        const handler = (_event: Electron.IpcRendererEvent, video: VideoFile) => callback(video)
+        ipcRenderer.on('video-file-ready', handler)
+        // Return cleanup function
+        return () => ipcRenderer.removeListener('video-file-ready', handler)
+    },
+    onScanFolderComplete: (callback: (folderPath: string) => void) => {
+        const handler = (_event: Electron.IpcRendererEvent, folderPath: string) => callback(folderPath)
+        ipcRenderer.on('scan-folder-complete', handler)
+        // Return cleanup function
+        return () => ipcRenderer.removeListener('scan-folder-complete', handler)
+    }
 }
 
 // Expose in the main world
