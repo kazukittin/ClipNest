@@ -128,9 +128,10 @@ export default function VideoGrid({
     }
 
     // Cast components to any to avoid type complexity with certain versions
-    // and handle potential CJS/ESM interop issues in Vite
-    const VirtualGrid = Grid as any
-    const ProxyAutoSizer = AutoSizer as any
+    // and handle potential CJS/ESM interop issues in Vite/Rollup during build
+    // react-window and react-virtualized-auto-sizer can resolve differently in dev vs prod
+    const VirtualGrid = (Grid as any).FixedSizeGrid || Grid
+    const ProxyAutoSizer = (AutoSizer as any).AutoSizer || (AutoSizer as any).default || AutoSizer
 
     // Cell renderer for react-window
     const Cell = ({ columnIndex, rowIndex, style, data }: any) => {
