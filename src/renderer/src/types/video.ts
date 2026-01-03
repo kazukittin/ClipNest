@@ -30,8 +30,10 @@ export interface WatchedFolder {
 
 // Electron API interface (mirrors preload)
 export interface ElectronAPI {
+    // Folder operations
     selectFolder: () => Promise<string | null>
     scanFolder: (folderPath: string) => Promise<VideoFile[]>
+    scanFolderProgressive: (folderPath: string) => Promise<{ totalFiles: number }>
     getVideoInfo: (videoPath: string) => Promise<VideoFile | null>
     getThumbnailsDir: () => Promise<string>
     getThumbnailData: (thumbnailPath: string) => Promise<string | null>
@@ -39,6 +41,21 @@ export interface ElectronAPI {
     toggleFavorite: (filePath: string) => Promise<boolean>
     updateTags: (filePath: string, tags: string[]) => Promise<string[]>
     getMetadata: (filePath: string) => Promise<VideoMetadata>
+    // Watched folders operations
+    getWatchedFolders: () => Promise<WatchedFolder[]>
+    saveWatchedFolder: (folder: WatchedFolder) => Promise<void>
+    removeWatchedFolder: (folderPath: string) => Promise<void>
+    // File operations
+    renameVideo: (oldPath: string, newName: string) => Promise<{ success: boolean, newPath: string | null, error?: string }>
+    deleteVideo: (filePath: string) => Promise<{ success: boolean, error?: string }>
+    // Window control operations
+    minimizeWindow: () => void
+    maximizeWindow: () => void
+    closeWindow: () => void
+    isWindowMaximized: () => Promise<boolean>
+    // Event listeners
+    onVideoFileReady: (callback: (video: VideoFile) => void) => () => void
+    onScanFolderComplete: (callback: (folderPath: string) => void) => () => void
 }
 
 // Extend Window interface

@@ -7,11 +7,28 @@
   * {
     @apply border-cn-border;
   }
-  
+
+  html,
   body {
     @apply bg-cn-dark text-cn-text antialiased;
     font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
     overflow: hidden;
+    scroll-behavior: smooth;
+    overscroll-behavior: none;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  @keyframes fadeIn {
+    from {
+      opacity: 0;
+      transform: translateY(10px);
+    }
+
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
   }
 
   /* Custom scrollbar */
@@ -34,6 +51,7 @@
 }
 
 @layer components {
+
   /* Glass effect for modals and overlays */
   .glass {
     @apply bg-cn-surface/80 backdrop-blur-xl border border-cn-border;
@@ -41,41 +59,38 @@
 
   /* Button variants */
   .btn-primary {
-    @apply px-4 py-2 bg-cn-accent hover:bg-cn-accent-hover text-white rounded-lg 
-           transition-all duration-200 font-medium 
-           focus:outline-none focus:ring-2 focus:ring-cn-accent/50;
+    @apply px-4 py-2 bg-cn-accent hover:bg-cn-accent-hover text-white rounded-lg transition-all duration-200 font-medium focus:outline-none focus:ring-2 focus:ring-cn-accent/50;
   }
 
   .btn-secondary {
-    @apply px-4 py-2 bg-cn-surface hover:bg-cn-surface-hover text-cn-text rounded-lg 
-           border border-cn-border transition-all duration-200 
-           focus:outline-none focus:ring-2 focus:ring-cn-border;
+    @apply px-4 py-2 bg-cn-surface hover:bg-cn-surface-hover text-cn-text rounded-lg border border-cn-border transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-cn-border;
   }
 
   /* Input styles */
   .input {
-    @apply w-full px-4 py-2 bg-cn-surface border border-cn-border rounded-lg 
-           text-cn-text placeholder-cn-text-muted
-           focus:outline-none focus:ring-2 focus:ring-cn-accent/50 focus:border-cn-accent
-           transition-all duration-200;
+    @apply w-full px-4 py-2 bg-cn-surface border border-cn-border rounded-lg text-cn-text placeholder-cn-text-muted focus:outline-none focus:ring-2 focus:ring-cn-accent/50 focus:border-cn-accent transition-all duration-200;
   }
 
   /* Tag pill */
   .tag {
-    @apply inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium
-           bg-cn-accent/20 text-cn-accent border border-cn-accent/30;
+    @apply inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-cn-accent/20 text-cn-accent border border-cn-accent/30;
   }
 
   /* Video card hover effect */
   .video-card {
-    @apply relative overflow-hidden rounded-xl bg-cn-surface border border-cn-border
-           transition-all duration-300 cursor-pointer
-           hover:border-cn-accent/50 hover:shadow-lg hover:shadow-cn-accent/10
-           hover:scale-[1.02];
+    @apply relative overflow-hidden rounded-xl bg-cn-surface border border-cn-border transition-all duration-300 cursor-pointer;
+    transform: translateZ(0);
+    backface-visibility: hidden;
+  }
+
+  .video-card:hover {
+    @apply border-cn-accent/50 shadow-lg shadow-cn-accent/10;
+    transform: translateZ(0) scale(1.02);
   }
 }
 
 @layer utilities {
+
   /* Fade in animation */
   .animate-in {
     animation: fadeIn 0.2s ease-out;
@@ -90,6 +105,7 @@
   .truncate-2 {
     display: -webkit-box;
     -webkit-line-clamp: 2;
+    line-clamp: 2;
     -webkit-box-orient: vertical;
     overflow: hidden;
   }
@@ -101,5 +117,14 @@
 
   .no-drag {
     -webkit-app-region: no-drag;
+  }
+
+  .scrollbar-hide::-webkit-scrollbar {
+    display: none;
+  }
+
+  .smooth-scroll {
+    scroll-behavior: smooth;
+    -webkit-overflow-scrolling: touch;
   }
 }

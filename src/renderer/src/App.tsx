@@ -334,15 +334,28 @@ function App(): JSX.Element {
         try {
             const result = await window.electron.deleteVideo(videoPath)
             if (result.success) {
+                // Remove from videos list
                 setVideos(prev => prev.filter(v => v.path !== videoPath))
+
+                // Clear editing and playing state if it was this video
                 setEditingVideo(null)
+                setPlayingVideo(prev => prev?.path === videoPath ? null : prev)
+
+                // Update folder video count
+                const folder = watchedFolders.find(f => videoPath.startsWith(f.path))
+                if (folder) {
+                    const updatedFolder = { ...folder, videoCount: Math.max(0, folder.videoCount - 1) }
+                    setWatchedFolders(prev => prev.map(f => f.path === folder.path ? updatedFolder : f))
+                    // Save the updated count to persistence
+                    await window.electron.saveWatchedFolder(updatedFolder)
+                }
             } else {
                 alert(result.error || 'ファイルの削除に失敗しました')
             }
         } catch (error) {
             console.error('Error deleting video:', error)
         }
-    }, [])
+    }, [watchedFolders])
 
     // Get all unique tags from videos
     const allTags = Array.from(new Set(videos.flatMap(v => v.tags)))

@@ -1,6 +1,6 @@
 import { app, BrowserWindow, shell, ipcMain, dialog, protocol } from 'electron'
 import { join, basename, extname } from 'path'
-import { readdir, stat, mkdir, access, readFile } from 'fs/promises'
+import { readdir, stat, mkdir, access, readFile, unlink } from 'fs/promises'
 import { existsSync } from 'fs'
 import { randomUUID } from 'crypto'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
@@ -600,12 +600,33 @@ ipcMain.handle('delete-video', async (_event, filePath: string): Promise<{ succe
         // Use shell.trashItem to move to trash/recycle bin
         await shell.trashItem(filePath)
 
+        // Remove thumbnails
+        try {
+            const thumbnailsDir = await getThumbnailsDir()
+            const pathHash = Buffer.from(filePath).toString('base64').replace(/[/+=]/g, '_').slice(0, 32)
+            
+            // Try to delete both v1 and v2 thumbnails
+            const thumbnailPaths = [
+                join(thumbnailsDir, `${pathHash}.jpg`),
+                join(thumbnailsDir, `${pathHash}_v2.jpg`)
+            ]
+
+            for (const tPath of thumbnailPaths) {
+                if (existsSync(tPath)) {
+                    await unlink(tPath)
+                }
+            }
+        } catch (thumbError) {
+            console.error('Error deleting thumbnails:', thumbError)
+            // Continue even if thumbnail deletion fails
+        }
+
         // Remove metadata
         const allMetadata = store.get('videoMetadata', {})
         delete allMetadata[filePath]
         store.set('videoMetadata', allMetadata)
 
-        console.log(`Deleted video (moved to trash): ${filePath}`)
+        console.log(`Deleted video (moved to trash) and its thumbnails: ${filePath}`)
         return { success: true }
     } catch (error) {
         console.error('Error deleting video:', error)
