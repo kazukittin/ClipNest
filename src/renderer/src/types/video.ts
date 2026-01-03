@@ -1,4 +1,4 @@
-// Video file from the main process
+// Video file from the main process (now includes metadata)
 export interface VideoFile {
     id: string
     name: string
@@ -6,14 +6,19 @@ export interface VideoFile {
     size: number
     createdAt: string
     extension: string
+    thumbnailPath: string | null
+    duration: number | null
+    isFavorite: boolean
+    tags: string[]
 }
 
-// Extended video with UI state
-export interface Video extends VideoFile {
-    thumbnail?: string
-    duration?: number
-    tags: string[]
+// Video type (same as VideoFile now that metadata is included)
+export type Video = VideoFile
+
+// Video metadata
+export interface VideoMetadata {
     isFavorite: boolean
+    tags: string[]
 }
 
 // Folder information
@@ -28,6 +33,12 @@ export interface ElectronAPI {
     selectFolder: () => Promise<string | null>
     scanFolder: (folderPath: string) => Promise<VideoFile[]>
     getVideoInfo: (videoPath: string) => Promise<VideoFile | null>
+    getThumbnailsDir: () => Promise<string>
+    getThumbnailData: (thumbnailPath: string) => Promise<string | null>
+    // Metadata operations
+    toggleFavorite: (filePath: string) => Promise<boolean>
+    updateTags: (filePath: string, tags: string[]) => Promise<string[]>
+    getMetadata: (filePath: string) => Promise<VideoMetadata>
 }
 
 // Extend Window interface

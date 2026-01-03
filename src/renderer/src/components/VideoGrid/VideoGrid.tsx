@@ -1,5 +1,5 @@
-import { useMemo } from 'react'
-import { Film, Heart, Clock, HardDrive, Loader2 } from 'lucide-react'
+import { useMemo, useState, useEffect } from 'react'
+import { Film, Heart, Clock, HardDrive, Loader2, Play } from 'lucide-react'
 import { Video } from '../../types/video'
 
 interface VideoGridProps {
@@ -9,8 +9,9 @@ interface VideoGridProps {
     showFavorites: boolean
     searchQuery: string
     isLoading: boolean
+    loadingMessage?: string
     onVideoPlay: (video: Video) => void
-    onToggleFavorite: (videoId: string) => void
+    onToggleFavorite: (videoPath: string) => void
 }
 
 // Format file size to human readable
@@ -27,7 +28,7 @@ function formatSize(bytes: number): string {
 function formatDuration(seconds: number): string {
     const hours = Math.floor(seconds / 3600)
     const minutes = Math.floor((seconds % 3600) / 60)
-    const secs = seconds % 60
+    const secs = Math.floor(seconds % 60)
 
     if (hours > 0) {
         return `${hours}:${minutes.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`
@@ -47,6 +48,7 @@ export default function VideoGrid({
     showFavorites,
     searchQuery,
     isLoading,
+    loadingMessage,
     onVideoPlay,
     onToggleFavorite
 }: VideoGridProps): JSX.Element {
@@ -92,15 +94,15 @@ export default function VideoGrid({
     return (
         <div className="flex-1 flex flex-col overflow-hidden">
             {/* Header */}
-            <header className="flex items-center justify-between px-6 py-4 border-b border-cn-border bg-cn-surface/50 backdrop-blur-sm">
+            <header className="flex items-center justify-between px-6 py-4 border-b border-cn-border bg-cn-surface/50 backdrop-blur-sm shrink-0">
                 <div>
                     <h2 className="text-xl font-semibold text-cn-text">{getTitle()}</h2>
                     <p className="text-sm text-cn-text-muted mt-0.5">
                         {filteredVideos.length} video{filteredVideos.length !== 1 ? 's' : ''}
                         {isLoading && (
-                            <span className="ml-2 inline-flex items-center gap-1">
+                            <span className="ml-2 inline-flex items-center gap-1.5 text-cn-accent">
                                 <Loader2 className="w-3 h-3 animate-spin" />
-                                <span>Loading...</span>
+                                <span>{loadingMessage || 'Loading...'}</span>
                             </span>
                         )}
                     </p>
@@ -109,7 +111,7 @@ export default function VideoGrid({
 
             {/* Grid */}
             <div className="flex-1 overflow-y-auto p-6">
-                {filteredVideos.length === 0 ? (
+                {filteredVideos.length === 0 && !isLoading ? (
                     <div className="flex flex-col items-center justify-center h-full text-cn-text-muted">
                         <div className="w-24 h-24 rounded-full bg-cn-surface flex items-center justify-center mb-4">
                             <Film className="w-12 h-12 opacity-30" />
@@ -131,7 +133,7 @@ export default function VideoGrid({
                                 video={video}
                                 index={index}
                                 onPlay={() => onVideoPlay(video)}
-                                onToggleFavorite={() => onToggleFavorite(video.id)}
+                                onToggleFavorite={() => onToggleFavorite(video.path)}
                             />
                         ))}
                     </div>
@@ -150,28 +152,68 @@ interface VideoCardProps {
 }
 
 function VideoCard({ video, index, onPlay, onToggleFavorite }: VideoCardProps): JSX.Element {
+    const [imageError, setImageError] = useState(false)
+    const [imageLoaded, setImageLoaded] = useState(false)
+    const [thumbnailDataUrl, setThumbnailDataUrl] = useState<string | null>(null)
+
+    // Load thumbnail via IPC
+    useEffect(() => {
+        if (video.thumbnailPath && !imageError) {
+            window.electron.getThumbnailData(video.thumbnailPath)
+                .then((dataUrl) => {
+                    if (dataUrl) {
+                        setThumbnailDataUrl(dataUrl)
+                    } else {
+                        setImageError(true)
+                    }
+                })
+                .catch(() => {
+                    setImageError(true)
+                })
+        }
+    }, [video.thumbnailPath, imageError])
+
     return (
         <div
             className="video-card group animate-fade-in"
-            style={{ animationDelay: `${index * 30}ms` }}
+            style={{ animationDelay: `${Math.min(index * 30, 300)}ms` }}
             onClick={onPlay}
         >
-            {/* Thumbnail */}
+            {/* Thumbnail - 16:9 Aspect Ratio */}
             <div className="relative aspect-video bg-gradient-to-br from-cn-surface to-cn-dark overflow-hidden">
-                {video.thumbnail ? (
-                    <img
-                        src={video.thumbnail}
-                        alt={video.name}
-                        className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-105"
-                    />
+                {thumbnailDataUrl ? (
+                    <>
+                        {/* Loading placeholder */}
+                        {!imageLoaded && (
+                            <div className="absolute inset-0 flex items-center justify-center bg-cn-surface">
+                                <Loader2 className="w-6 h-6 text-cn-text-muted animate-spin" />
+                            </div>
+                        )}
+                        <img
+                            src={thumbnailDataUrl}
+                            alt={video.name}
+                            className={`w-full h-full object-cover transition-all duration-300 group-hover:scale-105 ${imageLoaded ? 'opacity-100' : 'opacity-0'
+                                }`}
+                            onLoad={() => setImageLoaded(true)}
+                            onError={() => setImageError(true)}
+                        />
+                    </>
                 ) : (
+                    // Fallback: Film icon placeholder
                     <div className="absolute inset-0 flex items-center justify-center">
                         <div className="relative">
-                            <Film className="w-12 h-12 text-cn-text-muted/20" />
+                            <Film className="w-12 h-12 text-cn-text-muted/30" />
                             <div className="absolute inset-0 bg-gradient-to-t from-cn-accent/20 to-transparent rounded-full blur-xl" />
                         </div>
                     </div>
                 )}
+
+                {/* Play button overlay on hover */}
+                <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity duration-200">
+                    <div className="w-12 h-12 rounded-full bg-cn-accent/90 backdrop-blur-sm flex items-center justify-center shadow-lg transform scale-90 group-hover:scale-100 transition-transform duration-200">
+                        <Play className="w-5 h-5 text-white ml-0.5" />
+                    </div>
+                </div>
 
                 {/* Gradient overlay */}
                 <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300" />
@@ -181,9 +223,10 @@ function VideoCard({ video, index, onPlay, onToggleFavorite }: VideoCardProps): 
                     {getExtensionBadge(video.extension)}
                 </div>
 
-                {/* Duration badge (if available) */}
-                {video.duration && (
-                    <div className="absolute bottom-2 right-2 px-1.5 py-0.5 bg-black/70 backdrop-blur-sm rounded text-xs text-white font-medium">
+                {/* Duration badge */}
+                {video.duration !== null && video.duration > 0 && (
+                    <div className="absolute bottom-2 right-2 px-1.5 py-0.5 bg-black/80 backdrop-blur-sm rounded text-xs text-white font-medium flex items-center gap-1">
+                        <Clock className="w-3 h-3" />
                         {formatDuration(video.duration)}
                     </div>
                 )}
@@ -195,8 +238,8 @@ function VideoCard({ video, index, onPlay, onToggleFavorite }: VideoCardProps): 
                         onToggleFavorite()
                     }}
                     className={`absolute top-2 right-2 p-1.5 rounded-full transition-all duration-200 ${video.isFavorite
-                            ? 'bg-cn-error/90 text-white scale-100'
-                            : 'bg-black/50 text-white/70 hover:text-white opacity-0 group-hover:opacity-100 hover:scale-110'
+                        ? 'bg-cn-error/90 text-white scale-100'
+                        : 'bg-black/50 text-white/70 hover:text-white opacity-0 group-hover:opacity-100 hover:scale-110'
                         }`}
                 >
                     <Heart className={`w-4 h-4 ${video.isFavorite ? 'fill-current' : ''}`} />
@@ -209,12 +252,6 @@ function VideoCard({ video, index, onPlay, onToggleFavorite }: VideoCardProps): 
                             <HardDrive className="w-3 h-3" />
                             <span>{formatSize(video.size)}</span>
                         </div>
-                        {video.duration && (
-                            <div className="flex items-center gap-1">
-                                <Clock className="w-3 h-3" />
-                                <span>{formatDuration(video.duration)}</span>
-                            </div>
-                        )}
                     </div>
                 </div>
             </div>

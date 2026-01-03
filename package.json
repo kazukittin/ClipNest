@@ -18,6 +18,7 @@
     "clsx": "^2.1.1",
     "electron-store": "^8.2.0",
     "ffmpeg-static": "^5.3.0",
+    "ffprobe-static": "^3.1.0",
     "fluent-ffmpeg": "^2.1.3",
     "lucide-react": "^0.300.0",
     "react": "^18.2.0",
@@ -26,6 +27,7 @@
     "uuid": "^13.0.0"
   },
   "devDependencies": {
+    "@types/ffprobe-static": "^2.0.3",
     "@types/fluent-ffmpeg": "^2.1.28",
     "@types/node": "^20.10.0",
     "@types/react": "^18.2.0",
@@ -39,5 +41,30 @@
     "postcss": "^8.4.32",
     "tailwindcss": "^3.4.0",
     "typescript": "^5.3.3"
+  },
+  "build": {
+    "appId": "com.clipnest.app",
+    "productName": "ClipNest",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "out/**/*"
+    ],
+    "asarUnpack": [
+      "node_modules/ffmpeg-static/**"
+    ],
+    "win": {
+      "target": "nsis",
+      "icon": "resources/icon.ico"
+    },
+    "mac": {
+      "target": "dmg",
+      "icon": "resources/icon.icns"
+    },
+    "linux": {
+      "target": "AppImage",
+      "icon": "resources/icon.png"
+    }
   }
 }
