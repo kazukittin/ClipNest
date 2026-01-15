@@ -80,8 +80,11 @@ export default function Sidebar({
             <nav className="flex-1 overflow-y-auto p-3 space-y-1">
                 {/* All Videos */}
                 <button
-                    onClick={() => onFolderSelect(null)}
-                    className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all duration-200 ${!selectedFolder && !selectedTag && !showFavorites
+                    onClick={() => {
+                        onViewChange('library')
+                        onFolderSelect(null)
+                    }}
+                    className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all duration-200 ${currentView === 'library' && !selectedFolder && !selectedTag && !showFavorites
                         ? 'bg-cn-accent text-white shadow-lg shadow-cn-accent/20'
                         : 'hover:bg-cn-surface-hover text-cn-text'
                         }`}
@@ -100,6 +103,18 @@ export default function Sidebar({
                 >
                     <Heart className={`w-4 h-4 ${showFavorites ? 'fill-current' : ''}`} />
                     <span className="text-sm font-medium">お気に入り</span>
+                </button>
+
+                {/* StreamVault (Downloader) */}
+                <button
+                    onClick={() => onViewChange(currentView === 'downloader' ? 'library' : 'downloader')}
+                    className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all duration-200 ${currentView === 'downloader'
+                        ? 'bg-gradient-to-r from-blue-500 to-cyan-500 text-white shadow-lg shadow-blue-500/20'
+                        : 'hover:bg-cn-surface-hover text-cn-text'
+                        }`}
+                >
+                    <Download className="w-4 h-4" />
+                    <span className="text-sm font-medium">StreamVault</span>
                 </button>
 
                 {/* Folders Section */}

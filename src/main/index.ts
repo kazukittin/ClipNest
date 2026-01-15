@@ -80,6 +80,7 @@ interface WatchedFolder {
 interface StoreSchema {
     videoMetadata: Record<string, VideoMetadata>
     watchedFolders: WatchedFolder[]
+    downloadPath: string
 }
 
 // ========================================
@@ -90,9 +91,25 @@ const store = new Store<StoreSchema>({
     name: 'clipnest-data',
     defaults: {
         videoMetadata: {},
-        watchedFolders: []
+        watchedFolders: [],
+        downloadPath: ''
     }
 })
+
+// Get download path (returns default if not set)
+function getDownloadPath(): string {
+    const savedPath = store.get('downloadPath', '')
+    if (savedPath && existsSync(savedPath)) {
+        return savedPath
+    }
+    // Default to Downloads/StreamVault
+    return join(app.getPath('downloads'), 'StreamVault')
+}
+
+// Set download path
+function setDownloadPath(path: string): void {
+    store.set('downloadPath', path)
+}
 
 // Get metadata for a video
 function getVideoMetadata(filePath: string): VideoMetadata {
@@ -656,14 +673,13 @@ ipcMain.handle('delete-video', async (_event, filePath: string): Promise<{ succe
 const activeDownloads = new Map<string, any>()
 
 ipcMain.handle('download-video', async (event, { url, id }: { url: string; id: string }) => {
-    const downloadsDir = app.getPath('downloads')
-    const saveDir = join(downloadsDir, 'StreamVault')
+    const saveDir = getDownloadPath()
 
     if (!existsSync(saveDir)) {
         await mkdir(saveDir, { recursive: true })
     }
 
-    console.log(`Starting download for ${url} (ID: ${id})`)
+    console.log(`Starting download for ${url} (ID: ${id}) to ${saveDir}`)
 
     const args = [
         '-f', 'bestvideo+bestaudio/best',
@@ -685,6 +701,44 @@ ipcMain.handle('download-video', async (event, { url, id }: { url: string; id: s
     activeDownloads.set(id, process)
 
     return { success: true, message: 'Started' }
+})
+
+// Handler: Get download path
+ipcMain.handle('get-download-path', async (): Promise<string> => {
+    return getDownloadPath()
+})
+
+// Handler: Set download path
+ipcMain.handle('set-download-path', async (_event, path: string): Promise<{ success: boolean, path: string }> => {
+    if (!existsSync(path)) {
+        try {
+            await mkdir(path, { recursive: true })
+        } catch (err) {
+            console.error('Failed to create download directory:', err)
+            return { success: false, path: getDownloadPath() }
+        }
+    }
+    setDownloadPath(path)
+    console.log(`Download path set to: ${path}`)
+    return { success: true, path }
+})
+
+// Handler: Select download folder using native dialog
+ipcMain.handle('select-download-folder', async (): Promise<string | null> => {
+    const result = await dialog.showOpenDialog({
+        properties: ['openDirectory'],
+        title: 'ダウンロードの保存先を選択',
+        defaultPath: getDownloadPath()
+    })
+
+    if (result.canceled || result.filePaths.length === 0) {
+        return null
+    }
+
+    const selectedPath = result.filePaths[0]
+    setDownloadPath(selectedPath)
+    console.log(`Download path selected: ${selectedPath}`)
+    return selectedPath
 })
 
 ipcMain.handle('cancel-download', async (_event, id: string) => {

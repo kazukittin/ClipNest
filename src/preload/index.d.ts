@@ -56,6 +56,9 @@ export interface ElectronAPI {
     // StreamVault (Downloader) operations
     downloadVideo: (url: string, id: string) => Promise<{ success: boolean, message?: string }>
     cancelDownload: (id: string) => Promise<{ success: boolean }>
+    getDownloadPath: () => Promise<string>
+    setDownloadPath: (path: string) => Promise<{ success: boolean, path: string }>
+    selectDownloadFolder: () => Promise<string | null>
     onDownloadProgress: (callback: (data: { id: string, progress: number, status: string }) => void) => () => void
     onDownloadError: (callback: (data: { id: string, error: string }) => void) => () => void
 }

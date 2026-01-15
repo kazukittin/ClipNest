@@ -61,6 +61,9 @@ export interface ElectronAPI {
     // StreamVault (Downloader) operations
     downloadVideo: (url: string, id: string) => Promise<{ success: boolean, message?: string }>
     cancelDownload: (id: string) => Promise<{ success: boolean }>
+    getDownloadPath: () => Promise<string>
+    setDownloadPath: (path: string) => Promise<{ success: boolean, path: string }>
+    selectDownloadFolder: () => Promise<string | null>
     onDownloadProgress: (callback: (data: { id: string, progress: number, status: string }) => void) => () => void
     onDownloadError: (callback: (data: { id: string, error: string }) => void) => () => void
 }
@@ -88,6 +91,9 @@ const electronAPI: ElectronAPI = {
     // StreamVault operations
     downloadVideo: (url: string, id: string) => ipcRenderer.invoke('download-video', { url, id }),
     cancelDownload: (id: string) => ipcRenderer.invoke('cancel-download', id),
+    getDownloadPath: () => ipcRenderer.invoke('get-download-path'),
+    setDownloadPath: (path: string) => ipcRenderer.invoke('set-download-path', path),
+    selectDownloadFolder: () => ipcRenderer.invoke('select-download-folder'),
     onDownloadProgress: (callback) => {
         const handler = (_event: any, data: any) => callback(data)
         ipcRenderer.on('download-progress', handler)

@@ -35,6 +35,22 @@ export default function StreamVault(): JSX.Element {
     const [activeTab, setActiveTab] = useState<'queue' | 'history'>('queue')
     const [isDownloading, setIsDownloading] = useState(false)
     const [settingsOpen, setSettingsOpen] = useState(false)
+    const [downloadPath, setDownloadPath] = useState<string>('')
+
+    // Load download path on mount
+    useEffect(() => {
+        window.electron.getDownloadPath().then(path => {
+            setDownloadPath(path)
+        })
+    }, [])
+
+    // Handle folder selection
+    const handleSelectDownloadFolder = async () => {
+        const selectedPath = await window.electron.selectDownloadFolder()
+        if (selectedPath) {
+            setDownloadPath(selectedPath)
+        }
+    }
 
     // Helper to generate IDs
     const generateId = () => Math.random().toString(36).substr(2, 9)
@@ -59,6 +75,16 @@ export default function StreamVault(): JSX.Element {
 
         setQueue(prev => [...prev, newTask])
         setUrl('')
+    }
+
+    // Remove from queue
+    const handleRemoveFromQueue = (taskId: string) => {
+        setQueue(prev => prev.filter(t => t.id !== taskId))
+    }
+
+    // Clear history
+    const handleClearHistory = () => {
+        setHistory([])
     }
 
     // Start download (Real implementation)
@@ -177,8 +203,8 @@ export default function StreamVault(): JSX.Element {
                         onClick={handleStartDownload}
                         disabled={isDownloading || queue.length === 0}
                         className={`px-5 py-2 rounded-xl flex items-center gap-2 font-medium transition-colors ${isDownloading || queue.length === 0
-                                ? 'bg-cn-surface text-cn-text-muted cursor-not-allowed'
-                                : 'bg-cn-success text-white hover:bg-green-600 shadow-lg shadow-green-500/20'
+                            ? 'bg-cn-surface text-cn-text-muted cursor-not-allowed'
+                            : 'bg-cn-success text-white hover:bg-green-600 shadow-lg shadow-green-500/20'
                             }`}
                     >
                         {isDownloading ? <Pause className="w-5 h-5" /> : <Play className="w-5 h-5" />}
@@ -202,10 +228,15 @@ export default function StreamVault(): JSX.Element {
                                 <input
                                     type="text"
                                     readOnly
-                                    value="Downloads/StreamVault"
-                                    className="flex-1 bg-cn-dark border border-cn-border rounded-lg px-3 py-1.5 text-xs text-cn-text-muted"
+                                    value={downloadPath}
+                                    title={downloadPath}
+                                    className="flex-1 bg-cn-dark border border-cn-border rounded-lg px-3 py-1.5 text-xs text-cn-text-muted truncate"
                                 />
-                                <button className="p-1.5 hover:bg-cn-surface-hover rounded-lg text-cn-text-muted transition-colors">
+                                <button
+                                    onClick={handleSelectDownloadFolder}
+                                    className="p-1.5 hover:bg-cn-surface-hover rounded-lg text-cn-text-muted transition-colors hover:text-cn-accent"
+                                    title="保存先を変更"
+                                >
                                     <Folder className="w-4 h-4" />
                                 </button>
                             </div>
