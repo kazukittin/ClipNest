@@ -18,7 +18,7 @@ import { existsSync, createReadStream } from 'fs'
 import { randomUUID } from 'crypto'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import ffmpeg from 'fluent-ffmpeg'
-import ffmpegStatic from 'ffmpeg-static'
+const ffmpegStatic = require('ffmpeg-static')
 import ffprobeStatic from 'ffprobe-static'
 import Store from 'electron-store'
 
@@ -975,7 +975,7 @@ ipcMain.handle('fetch-video-product-data', async (_, code: string) => {
             const title = $('#title').text().trim()
             const maker = $('.maker-name').text().trim()
             const tags: string[] = []
-            $('.genre-list a').each((_, el) => {
+            $('.genre-list a').each((_: any, el: any) => {
                 const t = $(el).text().trim()
                 if (t) tags.push(t)
             })
@@ -1013,7 +1013,7 @@ ipcMain.handle('fetch-video-product-data', async (_, code: string) => {
 
             const title = $('.items_article_headerInfo h3').text().trim()
             const tags: string[] = []
-            $('.tag-tag').each((_, el) => {
+            $('.tag-tag').each((_: any, el: any) => {
                 const t = $(el).text().trim()
                 if (t) tags.push(t)
             })
