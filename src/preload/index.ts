@@ -58,6 +58,11 @@ export interface ElectronAPI {
     // Event listeners
     onVideoFileReady: (callback: (video: VideoFile) => void) => () => void
     onScanFolderComplete: (callback: (folderPath: string) => void) => () => void
+    // StreamVault (Downloader) operations
+    downloadVideo: (url: string, id: string) => Promise<{ success: boolean, message?: string }>
+    cancelDownload: (id: string) => Promise<{ success: boolean }>
+    onDownloadProgress: (callback: (data: { id: string, progress: number, status: string }) => void) => () => void
+    onDownloadError: (callback: (data: { id: string, error: string }) => void) => () => void
 }
 
 // Create the API object
@@ -80,6 +85,19 @@ const electronAPI: ElectronAPI = {
     // File operations
     renameVideo: (oldPath: string, newName: string) => ipcRenderer.invoke('rename-video', oldPath, newName),
     deleteVideo: (filePath: string) => ipcRenderer.invoke('delete-video', filePath),
+    // StreamVault operations
+    downloadVideo: (url: string, id: string) => ipcRenderer.invoke('download-video', { url, id }),
+    cancelDownload: (id: string) => ipcRenderer.invoke('cancel-download', id),
+    onDownloadProgress: (callback) => {
+        const handler = (_event: any, data: any) => callback(data)
+        ipcRenderer.on('download-progress', handler)
+        return () => ipcRenderer.removeListener('download-progress', handler)
+    },
+    onDownloadError: (callback) => {
+        const handler = (_event: any, data: any) => callback(data)
+        ipcRenderer.on('download-error', handler)
+        return () => ipcRenderer.removeListener('download-error', handler)
+    },
     // Window control operations
     minimizeWindow: () => ipcRenderer.send('window-minimize'),
     maximizeWindow: () => ipcRenderer.send('window-maximize'),

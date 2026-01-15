@@ -8,17 +8,58 @@ export interface VideoFile {
     extension: string
     thumbnailPath: string | null
     duration: number | null
+    isFavorite: boolean
+    tags: string[]
+    lastPlayedTime?: number
 }
 
-// Electron API interface exposed to renderer
+export interface VideoMetadata {
+    isFavorite: boolean
+    tags: string[]
+    lastPlayedTime?: number
+}
+
+export interface WatchedFolder {
+    path: string
+    name: string
+    videoCount: number
+}
+
 export interface ElectronAPI {
+    // Folder operations
     selectFolder: () => Promise<string | null>
     scanFolder: (folderPath: string) => Promise<VideoFile[]>
+    scanFolderProgressive: (folderPath: string) => Promise<{ totalFiles: number }>
     getVideoInfo: (videoPath: string) => Promise<VideoFile | null>
     getThumbnailsDir: () => Promise<string>
+    getThumbnailData: (thumbnailPath: string) => Promise<string | null>
+    // Metadata operations
+    toggleFavorite: (filePath: string) => Promise<boolean>
+    updateTags: (filePath: string, tags: string[]) => Promise<string[]>
+    updatePlaybackTime: (filePath: string, time: number) => Promise<void>
+    getMetadata: (filePath: string) => Promise<VideoMetadata>
+    // Watched folders operations
+    getWatchedFolders: () => Promise<WatchedFolder[]>
+    saveWatchedFolder: (folder: WatchedFolder) => Promise<void>
+    removeWatchedFolder: (folderPath: string) => Promise<void>
+    // File operations
+    renameVideo: (oldPath: string, newName: string) => Promise<{ success: boolean, newPath: string | null, error?: string }>
+    deleteVideo: (filePath: string) => Promise<{ success: boolean, error?: string }>
+    // Window control operations
+    minimizeWindow: () => void
+    maximizeWindow: () => void
+    closeWindow: () => void
+    isWindowMaximized: () => Promise<boolean>
+    // Event listeners
+    onVideoFileReady: (callback: (video: VideoFile) => void) => () => void
+    onScanFolderComplete: (callback: (folderPath: string) => void) => () => void
+    // StreamVault (Downloader) operations
+    downloadVideo: (url: string, id: string) => Promise<{ success: boolean, message?: string }>
+    cancelDownload: (id: string) => Promise<{ success: boolean }>
+    onDownloadProgress: (callback: (data: { id: string, progress: number, status: string }) => void) => () => void
+    onDownloadError: (callback: (data: { id: string, error: string }) => void) => () => void
 }
 
-// Extend the Window interface
 declare global {
     interface Window {
         electron: ElectronAPI

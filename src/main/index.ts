@@ -1,13 +1,16 @@
 import { app, BrowserWindow, shell, ipcMain, dialog, protocol } from 'electron'
 import { join, basename, extname } from 'path'
-import { readdir, stat, mkdir, access, readFile, unlink } from 'fs/promises'
-import { existsSync } from 'fs'
+import { readdir, stat, mkdir, access, readFile, unlink, rename } from 'fs/promises'
+import { spawn } from 'child_process'
+import { existsSync, createReadStream } from 'fs'
 import { randomUUID } from 'crypto'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import ffmpeg from 'fluent-ffmpeg'
 import ffmpegStatic from 'ffmpeg-static'
 import ffprobeStatic from 'ffprobe-static'
 import Store from 'electron-store'
+
+
 
 // ========================================
 // FFmpeg Setup
@@ -576,7 +579,7 @@ ipcMain.handle('remove-watched-folder', async (_event, folderPath: string): Prom
 // Handler: Rename a video file
 ipcMain.handle('rename-video', async (_event, oldPath: string, newName: string): Promise<{ success: boolean, newPath: string | null, error?: string }> => {
     try {
-        const { rename } = await import('fs/promises')
+
         const dir = join(oldPath, '..')
         const extension = extname(oldPath)
         const newPath = join(dir, `${newName}${extension}`)
@@ -645,6 +648,89 @@ ipcMain.handle('delete-video', async (_event, filePath: string): Promise<{ succe
         return { success: false, error: 'ファイルの削除に失敗しました' }
     }
 })
+
+// ========================================
+// StreamVault (Downloader) Handlers
+// ========================================
+
+const activeDownloads = new Map<string, any>()
+
+ipcMain.handle('download-video', async (event, { url, id }: { url: string; id: string }) => {
+    const downloadsDir = app.getPath('downloads')
+    const saveDir = join(downloadsDir, 'StreamVault')
+
+    if (!existsSync(saveDir)) {
+        await mkdir(saveDir, { recursive: true })
+    }
+
+    console.log(`Starting download for ${url} (ID: ${id})`)
+
+    const args = [
+        '-f', 'bestvideo+bestaudio/best',
+        '--merge-output-format', 'mp4',
+        '-o', join(saveDir, '%(title)s.%(ext)s'),
+        '--newline',
+        url
+    ]
+
+    let process = spawn('yt-dlp', args)
+
+    process.on('error', (err) => {
+        console.warn('Failed to start yt-dlp directly, trying python -m yt_dlp', err)
+        process = spawn('python', ['-m', 'yt_dlp', ...args])
+        setupProcessListeners(process, id, event)
+    })
+
+    setupProcessListeners(process, id, event)
+    activeDownloads.set(id, process)
+
+    return { success: true, message: 'Started' }
+})
+
+ipcMain.handle('cancel-download', async (_event, id: string) => {
+    const process = activeDownloads.get(id)
+    if (process) {
+        process.kill()
+        activeDownloads.delete(id)
+        return { success: true }
+    }
+    return { success: false }
+})
+
+function setupProcessListeners(process: any, id: string, event: Electron.IpcMainInvokeEvent) {
+    process.stdout.on('data', (data: Buffer) => {
+        const line = data.toString()
+        console.log(`[DL ${id}] ${line}`)
+
+        const progressMatch = line.match(/(\d+\.?\d*)%/)
+        if (progressMatch) {
+            const progress = parseFloat(progressMatch[1])
+            if (!event.sender.isDestroyed()) {
+                event.sender.send('download-progress', { id, progress, status: 'downloading' })
+            }
+        }
+
+        if (line.includes('[download] 100% of') || line.includes('has already been downloaded')) {
+            if (!event.sender.isDestroyed()) {
+                event.sender.send('download-progress', { id, progress: 100, status: 'completed' })
+            }
+        }
+    })
+
+    process.stderr.on('data', (data: Buffer) => {
+        console.error(`[DL ERR ${id}] ${data.toString()}`)
+    })
+
+    process.on('close', (code: number) => {
+        console.log(`Download process ${id} exited with code ${code}`)
+        activeDownloads.delete(id)
+        if (code !== 0 && code !== null) {
+            if (!event.sender.isDestroyed()) {
+                event.sender.send('download-error', { id, error: `Process exited with code ${code}` })
+            }
+        }
+    })
+}
 
 // ========================================
 // Window Control IPC Handlers
@@ -762,7 +848,6 @@ app.whenReady().then(() => {
                     const chunkSize = end - start + 1
 
                     // Read the specific range
-                    const { createReadStream } = await import('fs')
                     const stream = createReadStream(filePath, { start, end })
                     const chunks: Buffer[] = []
 

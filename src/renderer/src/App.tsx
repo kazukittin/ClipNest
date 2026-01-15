@@ -4,6 +4,7 @@ import VideoGrid from './components/VideoGrid/VideoGrid'
 import VideoPlayer from './components/Player/VideoPlayer'
 import VideoEditModal from './components/VideoEdit/VideoEditModal'
 import TitleBar from './components/TitleBar/TitleBar'
+import StreamVault from './components/StreamVault/StreamVault'
 import { Video, WatchedFolder } from './types/video'
 import { FolderPlus } from 'lucide-react'
 
@@ -30,6 +31,9 @@ function App(): JSX.Element {
     // State for drag and drop
     const [isDragging, setIsDragging] = useState(false)
     const [dragCounter, setDragCounter] = useState(0)
+
+    // View State
+    const [currentView, setCurrentView] = useState<'library' | 'downloader'>('library')
 
     // Track folders being scanned
     const scanningFoldersRef = useRef<Set<string>>(new Set())
@@ -265,6 +269,33 @@ function App(): JSX.Element {
         setSelectedTag(null)
     }
 
+    // Handle view switching
+    const handleViewChange = (view: 'library' | 'downloader') => {
+        setCurrentView(view)
+        if (view === 'downloader') {
+            // Reset library filters when switching away
+            setSelectedFolder(null)
+            setSelectedTag(null)
+            setShowFavorites(false)
+        }
+    }
+
+    // Wrap existing handlers to ensure we switch back to library view
+    const handleFolderSelectWrapper = (folder: string | null) => {
+        handleViewChange('library')
+        handleFolderSelect(folder)
+    }
+
+    const handleTagSelectWrapper = (tag: string | null) => {
+        handleViewChange('library')
+        handleTagSelect(tag)
+    }
+
+    const handleFavoritesToggleWrapper = () => {
+        handleViewChange('library')
+        handleFavoritesToggle()
+    }
+
     // Handle favorite toggle for a video (with persistence)
     const handleToggleFavorite = useCallback(async (videoPath: string) => {
         try {
@@ -379,9 +410,11 @@ function App(): JSX.Element {
                     selectedFolder={selectedFolder}
                     selectedTag={selectedTag}
                     showFavorites={showFavorites}
-                    onFolderSelect={handleFolderSelect}
-                    onTagSelect={handleTagSelect}
-                    onFavoritesToggle={handleFavoritesToggle}
+                    currentView={currentView}
+                    onViewChange={handleViewChange}
+                    onFolderSelect={handleFolderSelectWrapper}
+                    onTagSelect={handleTagSelectWrapper}
+                    onFavoritesToggle={handleFavoritesToggleWrapper}
                     onImportFolder={handleImportFolder}
                     searchQuery={searchQuery}
                     onSearchChange={setSearchQuery}
@@ -389,18 +422,22 @@ function App(): JSX.Element {
 
                 {/* Main Content */}
                 <main className="flex-1 flex flex-col overflow-hidden">
-                    <VideoGrid
-                        videos={videos}
-                        selectedFolder={selectedFolder}
-                        selectedTag={selectedTag}
-                        showFavorites={showFavorites}
-                        searchQuery={searchQuery}
-                        isLoading={isLoading}
-                        loadingMessage={loadingMessage}
-                        onVideoPlay={setPlayingVideo}
-                        onToggleFavorite={handleToggleFavorite}
-                        onVideoEdit={setEditingVideo}
-                    />
+                    {currentView === 'library' ? (
+                        <VideoGrid
+                            videos={videos}
+                            selectedFolder={selectedFolder}
+                            selectedTag={selectedTag}
+                            showFavorites={showFavorites}
+                            searchQuery={searchQuery}
+                            isLoading={isLoading}
+                            loadingMessage={loadingMessage}
+                            onVideoPlay={setPlayingVideo}
+                            onToggleFavorite={handleToggleFavorite}
+                            onVideoEdit={setEditingVideo}
+                        />
+                    ) : (
+                        <StreamVault />
+                    )}
                 </main>
             </div>
 

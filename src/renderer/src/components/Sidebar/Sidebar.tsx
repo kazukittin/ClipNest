@@ -8,7 +8,8 @@ import {
     ChevronDown,
     ChevronRight,
     Home,
-    Film
+    Film,
+    Download
 } from 'lucide-react'
 import { WatchedFolder } from '../../types/video'
 
@@ -18,6 +19,8 @@ interface SidebarProps {
     selectedFolder: string | null
     selectedTag: string | null
     showFavorites: boolean
+    currentView: 'library' | 'downloader'
+    onViewChange: (view: 'library' | 'downloader') => void
     onFolderSelect: (folder: string | null) => void
     onTagSelect: (tag: string | null) => void
     onFavoritesToggle: () => void
@@ -32,6 +35,8 @@ export default function Sidebar({
     selectedFolder,
     selectedTag,
     showFavorites,
+    currentView,
+    onViewChange,
     onFolderSelect,
     onTagSelect,
     onFavoritesToggle,
