@@ -3,6 +3,7 @@ import Sidebar from './components/Sidebar/Sidebar'
 import VideoGrid from './components/VideoGrid/VideoGrid'
 import VideoPlayer from './components/Player/VideoPlayer'
 import VideoEditModal from './components/VideoEdit/VideoEditModal'
+import BatchRenameModal from './components/BatchRename/BatchRenameModal'
 import TitleBar from './components/TitleBar/TitleBar'
 import StreamVault from './components/StreamVault/StreamVault'
 import { Video, WatchedFolder } from './types/video'
@@ -27,6 +28,9 @@ function App(): JSX.Element {
 
     // State for video editing
     const [editingVideo, setEditingVideo] = useState<Video | null>(null)
+
+    // State for batch rename
+    const [batchRenameVideos, setBatchRenameVideos] = useState<Video[] | null>(null)
 
     // State for drag and drop
     const [isDragging, setIsDragging] = useState(false)
@@ -391,6 +395,24 @@ function App(): JSX.Element {
     // Get all unique tags from videos
     const allTags = Array.from(new Set(videos.flatMap(v => v.tags)))
 
+    // Handle batch rename
+    const handleBatchRename = useCallback((videosToRename: Video[]) => {
+        setBatchRenameVideos(videosToRename)
+    }, [])
+
+    // Handle batch rename completion
+    const handleBatchRenameComplete = useCallback((results: { oldPath: string, newPath: string }[]) => {
+        // Update videos with new paths and names
+        setVideos(prev => prev.map(v => {
+            const renamed = results.find(r => r.oldPath === v.path)
+            if (renamed) {
+                const newName = renamed.newPath.split(/[\\/]/).pop()?.replace(/\.[^/.]+$/, '') || v.name
+                return { ...v, path: renamed.newPath, name: newName }
+            }
+            return v
+        }))
+    }, [])
+
     return (
         <div
             className="flex flex-col h-screen w-screen overflow-hidden bg-cn-dark relative"
@@ -434,6 +456,7 @@ function App(): JSX.Element {
                             onVideoPlay={setPlayingVideo}
                             onToggleFavorite={handleToggleFavorite}
                             onVideoEdit={setEditingVideo}
+                            onBatchRename={handleBatchRename}
                         />
                     ) : (
                         <StreamVault />
@@ -465,6 +488,15 @@ function App(): JSX.Element {
                         }
                     }}
                     onDelete={() => handleDeleteVideo(editingVideo.path)}
+                />
+            )}
+
+            {/* Batch Rename Modal */}
+            {batchRenameVideos && batchRenameVideos.length > 0 && (
+                <BatchRenameModal
+                    videos={batchRenameVideos}
+                    onClose={() => setBatchRenameVideos(null)}
+                    onComplete={handleBatchRenameComplete}
                 />
             )}
 

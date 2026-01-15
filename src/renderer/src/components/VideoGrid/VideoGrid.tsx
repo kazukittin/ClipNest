@@ -1,5 +1,5 @@
 import { useMemo, useState, useEffect } from 'react'
-import { Film, Heart, Clock, HardDrive, Loader2, Play, ArrowUpDown } from 'lucide-react'
+import { Film, Heart, Clock, HardDrive, Loader2, Play, ArrowUpDown, CheckSquare, Square, FileText } from 'lucide-react'
 import { FixedSizeGrid as Grid } from 'react-window'
 import AutoSizer from 'react-virtualized-auto-sizer'
 import { Video } from '../../types/video'
@@ -15,6 +15,7 @@ interface VideoGridProps {
     onVideoPlay: (video: Video) => void
     onToggleFavorite: (videoPath: string) => void
     onVideoEdit: (video: Video) => void
+    onBatchRename?: (videos: Video[]) => void
 }
 
 type SortField = 'name' | 'date' | 'size' | 'duration'
@@ -62,11 +63,48 @@ export default function VideoGrid({
     loadingMessage,
     onVideoPlay,
     onToggleFavorite,
-    onVideoEdit
+    onVideoEdit,
+    onBatchRename
 }: VideoGridProps): JSX.Element {
     // Sort state
     const [sortField, setSortField] = useState<SortField>('name')
     const [sortOrder, setSortOrder] = useState<SortOrder>('asc')
+
+    // Selection mode state
+    const [selectionMode, setSelectionMode] = useState(false)
+    const [selectedVideoIds, setSelectedVideoIds] = useState<Set<string>>(new Set())
+
+    // Clear selection when exiting selection mode
+    const handleToggleSelectionMode = () => {
+        if (selectionMode) {
+            setSelectedVideoIds(new Set())
+        }
+        setSelectionMode(!selectionMode)
+    }
+
+    // Toggle video selection
+    const handleToggleVideoSelection = (videoId: string) => {
+        setSelectedVideoIds(prev => {
+            const newSet = new Set(prev)
+            if (newSet.has(videoId)) {
+                newSet.delete(videoId)
+            } else {
+                newSet.add(videoId)
+            }
+            return newSet
+        })
+    }
+
+    // Select all filtered videos
+    const handleSelectAll = () => {
+        const allIds = new Set(filteredVideos.map(v => v.id))
+        setSelectedVideoIds(allIds)
+    }
+
+    // Clear selection
+    const handleClearSelection = () => {
+        setSelectedVideoIds(new Set())
+    }
 
     // Filter videos based on current selection
     const filteredVideos = useMemo(() => {
@@ -119,6 +157,11 @@ export default function VideoGrid({
         return filtered
     }, [videos, selectedFolder, selectedTag, showFavorites, searchQuery, sortField, sortOrder])
 
+    // Get selected videos (must be after filteredVideos)
+    const selectedVideos = useMemo(() => {
+        return filteredVideos.filter(v => selectedVideoIds.has(v.id))
+    }, [filteredVideos, selectedVideoIds])
+
     // Get header title
     const getTitle = () => {
         if (showFavorites) return 'お気に入り'
@@ -135,12 +178,13 @@ export default function VideoGrid({
 
     // Cell renderer for react-window
     const Cell = ({ columnIndex, rowIndex, style, data }: any) => {
-        const { videos, columnCount } = data
+        const { videos, columnCount, selectionMode, selectedVideoIds, onToggleSelection } = data
         const index = rowIndex * columnCount + columnIndex
 
         if (index >= videos.length) return null
 
         const video = videos[index]
+        const isSelected = selectedVideoIds.has(video.id)
 
         // Ensure we handle the style correctly as it's passed by react-window
         const left = (typeof style.left === 'number' ? style.left : parseFloat(style.left)) + GAP
@@ -159,9 +203,12 @@ export default function VideoGrid({
                 <VideoCard
                     video={video}
                     index={index}
-                    onPlay={() => onVideoPlay(video)}
+                    onPlay={() => selectionMode ? onToggleSelection(video.id) : onVideoPlay(video)}
                     onToggleFavorite={() => onToggleFavorite(video.path)}
                     onEdit={() => onVideoEdit(video)}
+                    selectionMode={selectionMode}
+                    isSelected={isSelected}
+                    onToggleSelection={() => onToggleSelection(video.id)}
                 />
             </div>
         )
@@ -174,37 +221,91 @@ export default function VideoGrid({
                 <div>
                     <h2 className="text-xl font-semibold text-cn-text">{getTitle()}</h2>
                     <p className="text-sm text-cn-text-muted mt-0.5">
-                        {filteredVideos.length} 件の動画
-                        {isLoading && (
-                            <span className="ml-2 inline-flex items-center gap-1.5 text-cn-accent">
-                                <Loader2 className="w-3 h-3 animate-spin" />
-                                <span>{loadingMessage || '読み込み中...'}</span>
+                        {selectionMode ? (
+                            <span className="text-cn-accent">
+                                {selectedVideoIds.size} / {filteredVideos.length} 件選択中
                             </span>
+                        ) : (
+                            <>
+                                {filteredVideos.length} 件の動画
+                                {isLoading && (
+                                    <span className="ml-2 inline-flex items-center gap-1.5 text-cn-accent">
+                                        <Loader2 className="w-3 h-3 animate-spin" />
+                                        <span>{loadingMessage || '読み込み中...'}</span>
+                                    </span>
+                                )}
+                            </>
                         )}
                     </p>
                 </div>
 
-                {/* Sort Control */}
-                <div className="flex items-center gap-2">
-                    <ArrowUpDown className="w-4 h-4 text-cn-text-muted" />
-                    <select
-                        value={`${sortField} -${sortOrder} `}
-                        onChange={(e) => {
-                            const [field, order] = e.target.value.split('-') as [SortField, SortOrder]
-                            setSortField(field)
-                            setSortOrder(order)
-                        }}
-                        className="bg-cn-surface hover:bg-cn-surface-hover border border-cn-border rounded-lg text-sm text-cn-text px-3 py-1.5 focus:outline-none focus:border-cn-accent transition-colors"
+                {/* Controls */}
+                <div className="flex items-center gap-3">
+                    {/* Selection Mode Controls */}
+                    {selectionMode && (
+                        <div className="flex items-center gap-2 mr-2">
+                            <button
+                                onClick={handleSelectAll}
+                                className="text-xs text-cn-text-muted hover:text-cn-accent transition-colors"
+                            >
+                                すべて選択
+                            </button>
+                            <span className="text-cn-border">|</span>
+                            <button
+                                onClick={handleClearSelection}
+                                className="text-xs text-cn-text-muted hover:text-cn-accent transition-colors"
+                            >
+                                選択解除
+                            </button>
+                            {selectedVideoIds.size > 0 && onBatchRename && (
+                                <>
+                                    <span className="text-cn-border">|</span>
+                                    <button
+                                        onClick={() => onBatchRename(selectedVideos)}
+                                        className="flex items-center gap-1.5 text-xs bg-gradient-to-r from-purple-500 to-pink-500 text-white px-3 py-1.5 rounded-lg hover:opacity-90 transition-opacity"
+                                    >
+                                        <FileText className="w-3.5 h-3.5" />
+                                        一括リネーム
+                                    </button>
+                                </>
+                            )}
+                        </div>
+                    )}
+
+                    {/* Selection Mode Toggle */}
+                    <button
+                        onClick={handleToggleSelectionMode}
+                        className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm transition-colors ${selectionMode
+                            ? 'bg-cn-accent text-white'
+                            : 'bg-cn-surface hover:bg-cn-surface-hover border border-cn-border text-cn-text-muted'
+                            }`}
                     >
-                        <option value="name-asc">名前 (A-Z)</option>
-                        <option value="name-desc">名前 (Z-A)</option>
-                        <option value="date-desc">日付 (新しい順)</option>
-                        <option value="date-asc">日付 (古い順)</option>
-                        <option value="size-desc">サイズ (大きい順)</option>
-                        <option value="size-asc">サイズ (小さい順)</option>
-                        <option value="duration-desc">時間 (長い順)</option>
-                        <option value="duration-asc">時間 (短い順)</option>
-                    </select>
+                        {selectionMode ? <CheckSquare className="w-4 h-4" /> : <Square className="w-4 h-4" />}
+                        <span>選択</span>
+                    </button>
+
+                    {/* Sort Control */}
+                    <div className="flex items-center gap-2">
+                        <ArrowUpDown className="w-4 h-4 text-cn-text-muted" />
+                        <select
+                            value={`${sortField}-${sortOrder}`}
+                            onChange={(e) => {
+                                const [field, order] = e.target.value.split('-') as [SortField, SortOrder]
+                                setSortField(field)
+                                setSortOrder(order)
+                            }}
+                            className="bg-cn-surface hover:bg-cn-surface-hover border border-cn-border rounded-lg text-sm text-cn-text px-3 py-1.5 focus:outline-none focus:border-cn-accent transition-colors"
+                        >
+                            <option value="name-asc">名前 (A-Z)</option>
+                            <option value="name-desc">名前 (Z-A)</option>
+                            <option value="date-desc">日付 (新しい順)</option>
+                            <option value="date-asc">日付 (古い順)</option>
+                            <option value="size-desc">サイズ (大きい順)</option>
+                            <option value="size-asc">サイズ (小さい順)</option>
+                            <option value="duration-desc">時間 (長い順)</option>
+                            <option value="duration-asc">時間 (短い順)</option>
+                        </select>
+                    </div>
                 </div>
             </header>
 
@@ -248,7 +349,13 @@ export default function VideoGrid({
                                         rowCount={rowCount}
                                         rowHeight={CARD_HEIGHT + GAP}
                                         width={width}
-                                        itemData={{ videos: filteredVideos, columnCount }}
+                                        itemData={{
+                                            videos: filteredVideos,
+                                            columnCount,
+                                            selectionMode,
+                                            selectedVideoIds,
+                                            onToggleSelection: handleToggleVideoSelection
+                                        }}
                                         className="scrollbar-thin scrollbar-thumb-cn-border scrollbar-track-transparent"
                                     >
                                         {Cell}
@@ -274,9 +381,12 @@ interface VideoCardProps {
     onPlay: () => void
     onToggleFavorite: () => void
     onEdit: () => void
+    selectionMode?: boolean
+    isSelected?: boolean
+    onToggleSelection?: () => void
 }
 
-function VideoCard({ video, index, onPlay, onToggleFavorite, onEdit }: VideoCardProps): JSX.Element {
+function VideoCard({ video, index, onPlay, onToggleFavorite, onEdit, selectionMode, isSelected, onToggleSelection }: VideoCardProps): JSX.Element {
     const [imageError, setImageError] = useState(false)
     const [imageLoaded, setImageLoaded] = useState(false)
     // 変更: IPC経由でのデータ取得を廃止し、local-fileプロトコルを使用
@@ -292,13 +402,37 @@ function VideoCard({ video, index, onPlay, onToggleFavorite, onEdit }: VideoCard
         onEdit()
     }
 
+    const handleClick = () => {
+        if (selectionMode && onToggleSelection) {
+            onToggleSelection()
+        } else {
+            onPlay()
+        }
+    }
+
     return (
         <div
-            className="video-card group animate-fade-in"
+            className={`video-card group animate-fade-in ${selectionMode ? 'cursor-pointer' : ''} ${isSelected ? 'ring-2 ring-cn-accent ring-offset-2 ring-offset-cn-dark' : ''}`}
             style={{ animationDelay: `${Math.min(index * 30, 300)}ms` }}
-            onClick={onPlay}
+            onClick={handleClick}
             onContextMenu={handleContextMenu}
         >
+            {/* Selection Checkbox */}
+            {selectionMode && (
+                <div className="absolute top-2 left-2 z-20">
+                    <div className={`w-6 h-6 rounded-md flex items-center justify-center transition-all ${isSelected
+                        ? 'bg-cn-accent text-white'
+                        : 'bg-black/50 text-white/70 border border-white/30'
+                        }`}>
+                        {isSelected ? (
+                            <CheckSquare className="w-4 h-4" />
+                        ) : (
+                            <Square className="w-4 h-4" />
+                        )}
+                    </div>
+                </div>
+            )}
+
             {/* Thumbnail - 16:9 Aspect Ratio */}
             <div className="relative aspect-video bg-gradient-to-br from-cn-surface to-cn-dark overflow-hidden">
                 {thumbnailUrl && !imageError ? (

@@ -626,6 +626,115 @@ ipcMain.handle('rename-video', async (_event, oldPath: string, newName: string):
     }
 })
 
+// Handler: Batch rename videos with sequential numbers
+interface BatchRenameItem {
+    oldPath: string
+    newPath: string
+}
+
+ipcMain.handle('batch-rename-videos', async (
+    _event,
+    videoPaths: string[],
+    prefix: string,
+    startNumber: number,
+    padLength: number
+): Promise<{ success: boolean, results: BatchRenameItem[], errors: string[] }> => {
+    const results: BatchRenameItem[] = []
+    const errors: string[] = []
+
+    // First, validate all new paths don't conflict
+    const newPaths: Map<string, string> = new Map()
+    for (let i = 0; i < videoPaths.length; i++) {
+        const oldPath = videoPaths[i]
+        const dir = join(oldPath, '..')
+        const extension = extname(oldPath)
+        const num = (startNumber + i).toString().padStart(padLength, '0')
+        const newName = `${prefix}${num}`
+        const newPath = join(dir, `${newName}${extension}`)
+
+        // Check for conflicts with existing files (not in our batch)
+        if (existsSync(newPath) && !videoPaths.includes(newPath)) {
+            errors.push(`${newName}${extension} は既に存在します`)
+            continue
+        }
+
+        // Check for conflicts within our batch
+        if (newPaths.has(newPath)) {
+            errors.push(`重複: ${newName}${extension}`)
+            continue
+        }
+
+        newPaths.set(oldPath, newPath)
+    }
+
+    if (errors.length > 0) {
+        return { success: false, results: [], errors }
+    }
+
+    // Perform the renames
+    // We rename to temp names first to avoid conflicts during rename
+    const tempRenames: Map<string, string> = new Map()
+    const tempSuffix = `_temp_${Date.now()}`
+
+    try {
+        // Step 1: Rename all to temp names
+        for (const entry of Array.from(newPaths.entries())) {
+            const oldPath = entry[0]
+            const dir = join(oldPath, '..')
+            const extension = extname(oldPath)
+            const baseName = basename(oldPath, extension)
+            const tempPath = join(dir, `${baseName}${tempSuffix}${extension}`)
+
+            await rename(oldPath, tempPath)
+            tempRenames.set(tempPath, oldPath)
+        }
+
+        // Step 2: Rename from temp to final names
+        for (const entry of Array.from(newPaths.entries())) {
+            const oldPath = entry[0]
+            const newPath = entry[1]
+            const dir = join(oldPath, '..')
+            const extension = extname(oldPath)
+            const baseName = basename(oldPath, extension)
+            const tempPath = join(dir, `${baseName}${tempSuffix}${extension}`)
+
+            await rename(tempPath, newPath)
+            tempRenames.delete(tempPath)
+
+            // Migrate metadata
+            const metadata = getVideoMetadata(oldPath)
+            if (metadata.isFavorite || metadata.tags.length > 0 || metadata.lastPlayedTime) {
+                saveVideoMetadata(newPath, metadata)
+                const allMetadata = store.get('videoMetadata', {})
+                delete allMetadata[oldPath]
+                store.set('videoMetadata', allMetadata)
+            }
+
+            results.push({ oldPath, newPath })
+            console.log(`Batch renamed: ${oldPath} -> ${newPath}`)
+        }
+
+        return { success: true, results, errors: [] }
+    } catch (error) {
+        console.error('Error in batch rename:', error)
+
+        // Attempt to rollback temp renames
+        for (const entry of Array.from(tempRenames.entries())) {
+            const tempPath = entry[0]
+            const originalPath = entry[1]
+            try {
+                if (existsSync(tempPath)) {
+                    await rename(tempPath, originalPath)
+                }
+            } catch (rollbackError) {
+                console.error('Rollback failed:', rollbackError)
+            }
+        }
+
+        return { success: false, results: [], errors: ['一括リネームに失敗しました'] }
+    }
+})
+
 // Handler: Delete a video file (move to trash)
 ipcMain.handle('delete-video', async (_event, filePath: string): Promise<{ success: boolean, error?: string }> => {
     try {
