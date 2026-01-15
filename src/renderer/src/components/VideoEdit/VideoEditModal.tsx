@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react'
-import { X, Save, Trash2, Tag, FileText, AlertTriangle } from 'lucide-react'
+import { X, Save, Trash2, Tag, FileText, AlertTriangle, Search, Loader2, Globe } from 'lucide-react'
 import { Video } from '../../types/video'
 
 interface VideoEditModalProps {
@@ -19,6 +19,8 @@ export default function VideoEditModal({
     const [tagsInput, setTagsInput] = useState(video.tags.join(', '))
     const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
     const [isDeleting, setIsDeleting] = useState(false)
+    const [productCode, setProductCode] = useState('')
+    const [isFetchingInfo, setIsFetchingInfo] = useState(false)
     const nameInputRef = useRef<HTMLInputElement>(null)
 
     // Focus name input on mount
@@ -63,6 +65,41 @@ export default function VideoEditModal({
         onDelete()
     }
 
+    const handleFetchInfo = async () => {
+        if (!productCode.trim()) return
+
+        setIsFetchingInfo(true)
+        try {
+            const data = await window.electron.fetchVideoProductData(productCode.trim())
+            if (data) {
+                // Update title if found
+                if (data.title) setName(data.title)
+
+                // Merge tags
+                const existingTags = tagsInput.split(',').map(t => t.trim().toLowerCase()).filter(Boolean)
+                const newTagsSet = new Set(existingTags)
+                data.tags.forEach(t => newTagsSet.add(t.toLowerCase()))
+
+                // Add maker/actress as tags too if available
+                if (data.maker) newTagsSet.add(data.maker.toLowerCase())
+                if (data.actress && data.actress.length > 0) {
+                    data.actress.forEach(a => newTagsSet.add(a.toLowerCase()))
+                }
+
+                setTagsInput(Array.from(newTagsSet).join(', '))
+
+                // Clear code input to indicate success? Or keep it? keeping it is fine.
+            } else {
+                alert('情報が見つかりませんでした')
+            }
+        } catch (error) {
+            console.error('Fetch error:', error)
+            alert('情報の取得中にエラーが発生しました')
+        } finally {
+            setIsFetchingInfo(false)
+        }
+    }
+
     const handleBackgroundClick = (e: React.MouseEvent) => {
         if (e.target === e.currentTarget) {
             onClose()
@@ -91,6 +128,38 @@ export default function VideoEditModal({
 
                 {/* Content */}
                 <div className="p-4 space-y-4">
+                    {/* Product Code Input (Online Fetch) */}
+                    <div>
+                        <label className="flex items-center gap-2 text-sm font-medium text-white/80 mb-2">
+                            <Globe className="w-4 h-4" />
+                            商品コードから自動入力
+                        </label>
+                        <div className="flex gap-2">
+                            <input
+                                type="text"
+                                value={productCode}
+                                onChange={(e) => setProductCode(e.target.value)}
+                                onKeyDown={(e) => {
+                                    if (e.key === 'Enter') {
+                                        e.preventDefault()
+                                        handleFetchInfo()
+                                    }
+                                }}
+                                placeholder="FANZA, FC2などの品番 (例: abc-123)"
+                                className="flex-1 px-4 py-2.5 bg-cn-dark border border-cn-border rounded-lg text-white placeholder:text-white/40 focus:outline-none focus:border-cn-accent transition-colors"
+                            />
+                            <button
+                                onClick={handleFetchInfo}
+                                disabled={isFetchingInfo || !productCode.trim()}
+                                className="px-3 bg-cn-accent/20 text-cn-accent border border-cn-accent/30 rounded-lg hover:bg-cn-accent/30 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                            >
+                                {isFetchingInfo ? <Loader2 className="w-5 h-5 animate-spin" /> : <Search className="w-5 h-5" />}
+                            </button>
+                        </div>
+                    </div>
+
+                    <div className="h-px bg-white/10" />
+
                     {/* Name Input */}
                     <div>
                         <label className="flex items-center gap-2 text-sm font-medium text-white/80 mb-2">

@@ -17,7 +17,11 @@ import {
     Settings,
     Loader2,
     Repeat,
-    FastForward
+    FastForward,
+    ChevronLeft,
+    ChevronRight,
+    ArrowLeft,
+    ArrowRight
 } from 'lucide-react'
 import { Video } from '../../types/video'
 
@@ -26,6 +30,8 @@ interface VideoPlayerProps {
     onClose: () => void
     onToggleFavorite: () => void
     onUpdateTags: (tags: string[]) => void
+    onNext?: () => void
+    onPrev?: () => void
 }
 
 // Convert local path to local-file:// URL for video playback
@@ -34,7 +40,7 @@ function toVideoUrl(path: string): string {
     return `local-file:///${normalizedPath}`
 }
 
-export default function VideoPlayer({ video, onClose, onToggleFavorite, onUpdateTags }: VideoPlayerProps): JSX.Element {
+export default function VideoPlayer({ video, onClose, onToggleFavorite, onUpdateTags, onNext, onPrev }: VideoPlayerProps): JSX.Element {
     const videoRef = useRef<HTMLVideoElement>(null)
     const containerRef = useRef<HTMLDivElement>(null)
     const tagInputRef = useRef<HTMLInputElement>(null)
@@ -496,6 +502,27 @@ export default function VideoPlayer({ video, onClose, onToggleFavorite, onUpdate
                 </div>
             )}
 
+            {/* Navigation Buttons */}
+            {onPrev && (
+                <button
+                    className="absolute left-4 top-1/2 -translate-y-1/2 p-3 bg-black/20 hover:bg-black/60 rounded-full text-white/30 hover:text-white transition-all backdrop-blur-sm z-40 opacity-0 group-hover/container:opacity-100 hover:scale-110 active:scale-95"
+                    onClick={(e) => { e.stopPropagation(); onPrev(); }}
+                    title="前の動画 (ArrowLeft)"
+                >
+                    <ChevronLeft className="w-8 h-8" />
+                </button>
+            )}
+
+            {onNext && (
+                <button
+                    className="absolute right-4 top-1/2 -translate-y-1/2 p-3 bg-black/20 hover:bg-black/60 rounded-full text-white/30 hover:text-white transition-all backdrop-blur-sm z-40 opacity-0 group-hover/container:opacity-100 hover:scale-110 active:scale-95"
+                    onClick={(e) => { e.stopPropagation(); onNext(); }}
+                    title="次の動画 (ArrowRight)"
+                >
+                    <ChevronRight className="w-8 h-8" />
+                </button>
+            )}
+
             {/* Top Bar (Title & Close) */}
             <div className={`absolute top-0 left-0 right-0 p-6 flex items-start justify-between z-40 transition-all duration-300 ${showControls ? 'opacity-100 translate-y-0' : 'opacity-0 -translate-y-4'}`}>
                 <div className="flex flex-col gap-1 max-w-[70%]">
@@ -566,37 +593,40 @@ export default function VideoPlayer({ video, onClose, onToggleFavorite, onUpdate
                         </button>
                     </div>
                 </div>
-            )}
+            )
+            }
 
             {/* Settings Popup */}
-            {showSettings && (
-                <div
-                    className="absolute bottom-24 right-6 z-50 w-64 bg-cn-surface/95 backdrop-blur-xl border border-cn-border rounded-xl shadow-2xl p-2 animate-in fade-in slide-in-from-bottom-5 duration-200"
-                    onClick={(e) => e.stopPropagation()}
-                >
-                    <div className="flex flex-col gap-1">
-                        <div className="px-3 py-2 text-xs font-semibold text-white/50 uppercase tracking-wider">再生速度</div>
-                        {[0.5, 0.75, 1, 1.25, 1.5, 2].map(rate => (
+            {
+                showSettings && (
+                    <div
+                        className="absolute bottom-24 right-6 z-50 w-64 bg-cn-surface/95 backdrop-blur-xl border border-cn-border rounded-xl shadow-2xl p-2 animate-in fade-in slide-in-from-bottom-5 duration-200"
+                        onClick={(e) => e.stopPropagation()}
+                    >
+                        <div className="flex flex-col gap-1">
+                            <div className="px-3 py-2 text-xs font-semibold text-white/50 uppercase tracking-wider">再生速度</div>
+                            {[0.5, 0.75, 1, 1.25, 1.5, 2].map(rate => (
+                                <button
+                                    key={rate}
+                                    onClick={() => changePlaybackRate(rate)}
+                                    className={`flex items-center justify-between px-3 py-2 text-sm rounded-lg transition-colors ${playbackRate === rate ? 'bg-cn-accent/20 text-cn-accent' : 'text-white hover:bg-white/5'}`}
+                                >
+                                    <span>{rate}x</span>
+                                    {playbackRate === rate && <div className="w-2 h-2 rounded-full bg-cn-accent" />}
+                                </button>
+                            ))}
+                            <div className="h-px bg-white/10 my-1" />
                             <button
-                                key={rate}
-                                onClick={() => changePlaybackRate(rate)}
-                                className={`flex items-center justify-between px-3 py-2 text-sm rounded-lg transition-colors ${playbackRate === rate ? 'bg-cn-accent/20 text-cn-accent' : 'text-white hover:bg-white/5'}`}
+                                onClick={() => { setIsLooping(!isLooping); setShowSettings(false); showFeedback(<Repeat className={`w-8 h-8 ${!isLooping ? 'text-cn-accent' : 'text-white/50'}`} />, !isLooping ? 'ループ: オン' : 'ループ: オフ'); }}
+                                className={`flex items-center justify-between px-3 py-2 text-sm rounded-lg transition-colors ${isLooping ? 'bg-cn-accent/20 text-cn-accent' : 'text-white hover:bg-white/5'}`}
                             >
-                                <span>{rate}x</span>
-                                {playbackRate === rate && <div className="w-2 h-2 rounded-full bg-cn-accent" />}
+                                <span>ループ再生</span>
+                                <Repeat className="w-4 h-4" />
                             </button>
-                        ))}
-                        <div className="h-px bg-white/10 my-1" />
-                        <button
-                            onClick={() => { setIsLooping(!isLooping); setShowSettings(false); showFeedback(<Repeat className={`w-8 h-8 ${!isLooping ? 'text-cn-accent' : 'text-white/50'}`} />, !isLooping ? 'ループ: オン' : 'ループ: オフ'); }}
-                            className={`flex items-center justify-between px-3 py-2 text-sm rounded-lg transition-colors ${isLooping ? 'bg-cn-accent/20 text-cn-accent' : 'text-white hover:bg-white/5'}`}
-                        >
-                            <span>ループ再生</span>
-                            <Repeat className="w-4 h-4" />
-                        </button>
+                        </div>
                     </div>
-                </div>
-            )}
+                )
+            }
 
             {/* Bottom Controls */}
             <div
@@ -681,8 +711,19 @@ export default function VideoPlayer({ video, onClose, onToggleFavorite, onUpdate
 
                         <div className="w-px h-4 bg-white/20 mx-1" />
 
-                        <button onClick={() => setShowSettings(!showSettings)} className={`p-2 rounded-full hover:bg-white/10 transition-colors ${showSettings ? 'text-cn-accent bg-white/10' : ''} ${isLooping || playbackRate !== 1 ? 'text-cn-accent' : ''}`} title="設定">
+                        <button onClick={() => setShowSettings(!showSettings)} className={`p-2 rounded-full hover:bg-white/10 transition-colors ${showSettings ? 'text-cn-accent bg-white/10' : ''} ${playbackRate !== 1 ? 'text-cn-accent' : ''}`} title="設定">
                             <Settings className="w-5 h-5" />
+                        </button>
+
+                        <button
+                            onClick={() => {
+                                setIsLooping(!isLooping);
+                                showFeedback(<Repeat className={`w-8 h-8 ${!isLooping ? 'text-cn-accent' : 'text-white/50'}`} />, !isLooping ? 'ループ: オン' : 'ループ: オフ')
+                            }}
+                            className={`p-2 rounded-full hover:bg-white/10 transition-colors ${isLooping ? 'text-cn-accent bg-white/10' : ''}`}
+                            title="ループ再生"
+                        >
+                            <Repeat className="w-5 h-5" />
                         </button>
 
                         <button onClick={toggleFullscreen} className="p-2 rounded-full hover:bg-white/10 transition-colors" title="フルスクリーン (F)">
@@ -691,6 +732,6 @@ export default function VideoPlayer({ video, onClose, onToggleFavorite, onUpdate
                     </div>
                 </div>
             </div>
-        </div>
+        </div >
     )
 }

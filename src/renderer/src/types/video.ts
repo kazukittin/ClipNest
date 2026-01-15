@@ -23,12 +23,25 @@ export interface VideoMetadata {
     lastPlayedTime?: number
 }
 
+// Product data retrieved from online
+export interface ProductData {
+    title: string
+    tags: string[]
+    maker?: string
+    actress?: string[]
+    thumbnailUrl?: string
+}
+
 // Folder information
 export interface WatchedFolder {
     path: string
     name: string
     videoCount: number
 }
+
+// Sorting types
+export type SortField = 'name' | 'date' | 'size' | 'duration'
+export type SortOrder = 'asc' | 'desc'
 
 // Electron API interface (mirrors preload)
 export interface ElectronAPI {
@@ -48,6 +61,11 @@ export interface ElectronAPI {
     getWatchedFolders: () => Promise<WatchedFolder[]>
     saveWatchedFolder: (folder: WatchedFolder) => Promise<void>
     removeWatchedFolder: (folderPath: string) => Promise<void>
+    // Video cache operations
+    getCachedVideos: () => Promise<VideoFile[]>
+    saveVideoCache: (videos: Video[]) => Promise<void>
+    clearVideoCache: () => Promise<void>
+    fetchVideoProductData: (productCode: string) => Promise<ProductData | null>
     // File operations
     renameVideo: (oldPath: string, newName: string) => Promise<{ success: boolean, newPath: string | null, error?: string }>
     deleteVideo: (filePath: string) => Promise<{ success: boolean, error?: string }>

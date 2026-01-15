@@ -30,11 +30,6 @@ export default function BatchRenameModal({ videos, onClose, onComplete }: BatchR
     }, [videos, prefix, startNumber, padLength])
 
     const handleRename = async () => {
-        if (!prefix.trim()) {
-            setError('プレフィックスを入力してください')
-            return
-        }
-
         setIsProcessing(true)
         setError(null)
 
@@ -42,7 +37,7 @@ export default function BatchRenameModal({ videos, onClose, onComplete }: BatchR
             const videoPaths = videos.map(v => v.path)
             const result = await window.electron.batchRenameVideos(
                 videoPaths,
-                prefix.trim(),
+                prefix,
                 startNumber,
                 padLength
             )
@@ -104,7 +99,7 @@ export default function BatchRenameModal({ videos, onClose, onComplete }: BatchR
                                 type="text"
                                 value={prefix}
                                 onChange={(e) => setPrefix(e.target.value)}
-                                placeholder="video_"
+                                placeholder="video_ (空の場合は連番のみ)"
                                 className="w-full bg-cn-dark border border-cn-border rounded-lg px-4 py-2.5 text-cn-text focus:outline-none focus:border-cn-accent"
                             />
                         </div>
@@ -134,8 +129,8 @@ export default function BatchRenameModal({ videos, onClose, onComplete }: BatchR
                                     key={len}
                                     onClick={() => setPadLength(len)}
                                     className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${padLength === len
-                                            ? 'bg-cn-accent text-white'
-                                            : 'bg-cn-dark border border-cn-border text-cn-text-muted hover:bg-cn-surface-hover'
+                                        ? 'bg-cn-accent text-white'
+                                        : 'bg-cn-dark border border-cn-border text-cn-text-muted hover:bg-cn-surface-hover'
                                         }`}
                                 >
                                     {len}桁
@@ -149,21 +144,24 @@ export default function BatchRenameModal({ videos, onClose, onComplete }: BatchR
                 <div className="flex-1 overflow-auto p-6">
                     <h3 className="text-sm font-medium text-cn-text-muted mb-3">プレビュー</h3>
                     <div className="space-y-2 max-h-64 overflow-y-auto">
-                        {previewNames.map((item, index) => (
-                            <div
-                                key={item.video.id}
-                                className="flex items-center gap-3 p-3 bg-cn-dark rounded-lg text-sm"
-                            >
-                                <span className="text-cn-text-muted w-8">{index + 1}.</span>
-                                <span className="text-cn-text truncate flex-1" title={item.oldName}>
-                                    {item.oldName}
-                                </span>
-                                <ArrowRight className="w-4 h-4 text-cn-text-muted flex-shrink-0" />
-                                <span className="text-cn-accent font-medium truncate flex-1" title={item.newName}>
-                                    {item.newName}
-                                </span>
-                            </div>
-                        ))}
+                        {previewNames.map((item, index) => {
+                            const isSame = item.oldName === item.newName
+                            return (
+                                <div
+                                    key={item.video.id}
+                                    className={`flex items-center gap-3 p-3 rounded-lg text-sm ${isSame ? 'bg-cn-surface border border-cn-border opacity-60' : 'bg-cn-dark'}`}
+                                >
+                                    <span className="text-cn-text-muted w-8">{index + 1}.</span>
+                                    <span className="text-cn-text truncate flex-1" title={item.oldName}>
+                                        {item.oldName}
+                                    </span>
+                                    <ArrowRight className="w-4 h-4 text-cn-text-muted flex-shrink-0" />
+                                    <span className={`font-medium truncate flex-1 ${isSame ? 'text-cn-text-muted' : 'text-cn-accent'}`} title={item.newName}>
+                                        {isSame ? '(変更なし)' : item.newName}
+                                    </span>
+                                </div>
+                            )
+                        })}
                     </div>
                 </div>
 
@@ -193,7 +191,7 @@ export default function BatchRenameModal({ videos, onClose, onComplete }: BatchR
                     </button>
                     <button
                         onClick={handleRename}
-                        disabled={isProcessing || !prefix.trim() || videos.length === 0}
+                        disabled={isProcessing || videos.length === 0}
                         className="px-5 py-2.5 rounded-lg bg-gradient-to-r from-purple-500 to-pink-500 text-white font-medium hover:opacity-90 transition-opacity disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
                     >
                         {isProcessing ? (

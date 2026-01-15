@@ -1,25 +1,25 @@
-import { useMemo, useState, useEffect } from 'react'
+import { useMemo, useState } from 'react'
 import { Film, Heart, Clock, HardDrive, Loader2, Play, ArrowUpDown, CheckSquare, Square, FileText } from 'lucide-react'
 import { FixedSizeGrid as Grid } from 'react-window'
 import AutoSizer from 'react-virtualized-auto-sizer'
-import { Video } from '../../types/video'
+import { Video, SortField, SortOrder } from '../../types/video'
 
 interface VideoGridProps {
-    videos: Video[]
+    videos: Video[] // Filtered and sorted videos
     selectedFolder: string | null
     selectedTag: string | null
     showFavorites: boolean
     searchQuery: string
+    sortField: SortField
+    sortOrder: SortOrder
     isLoading: boolean
     loadingMessage?: string
     onVideoPlay: (video: Video) => void
     onToggleFavorite: (videoPath: string) => void
     onVideoEdit: (video: Video) => void
     onBatchRename?: (videos: Video[]) => void
+    onSortChange: (field: SortField, order: SortOrder) => void
 }
-
-type SortField = 'name' | 'date' | 'size' | 'duration'
-type SortOrder = 'asc' | 'desc'
 
 // Constants for Grid Layout
 const CARD_MIN_WIDTH = 250
@@ -38,14 +38,13 @@ function formatSize(bytes: number): string {
 
 // Format duration to mm:ss or hh:mm:ss
 function formatDuration(seconds: number): string {
-    const hours = Math.floor(seconds / 3600)
-    const minutes = Math.floor((seconds % 3600) / 60)
-    const secs = Math.floor(seconds % 60)
-
-    if (hours > 0) {
-        return `${hours}:${minutes.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')} `
+    const h = Math.floor(seconds / 3600)
+    const m = Math.floor((seconds % 3600) / 60)
+    const s = Math.floor(seconds % 60)
+    if (h > 0) {
+        return `${h}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`
     }
-    return `${minutes}:${secs.toString().padStart(2, '0')} `
+    return `${m}:${s.toString().padStart(2, '0')}`
 }
 
 // Get file extension display
@@ -59,17 +58,16 @@ export default function VideoGrid({
     selectedTag,
     showFavorites,
     searchQuery,
+    sortField,
+    sortOrder,
     isLoading,
     loadingMessage,
     onVideoPlay,
     onToggleFavorite,
     onVideoEdit,
-    onBatchRename
+    onBatchRename,
+    onSortChange
 }: VideoGridProps): JSX.Element {
-    // Sort state
-    const [sortField, setSortField] = useState<SortField>('name')
-    const [sortOrder, setSortOrder] = useState<SortOrder>('asc')
-
     // Selection mode state
     const [selectionMode, setSelectionMode] = useState(false)
     const [selectedVideoIds, setSelectedVideoIds] = useState<Set<string>>(new Set())
@@ -95,9 +93,9 @@ export default function VideoGrid({
         })
     }
 
-    // Select all filtered videos
+    // Select all videos
     const handleSelectAll = () => {
-        const allIds = new Set(filteredVideos.map(v => v.id))
+        const allIds = new Set(videos.map(v => v.id))
         setSelectedVideoIds(allIds)
     }
 
@@ -106,61 +104,10 @@ export default function VideoGrid({
         setSelectedVideoIds(new Set())
     }
 
-    // Filter videos based on current selection
-    const filteredVideos = useMemo(() => {
-        let filtered = [...videos]
-
-        // Filter by folder
-        if (selectedFolder) {
-            filtered = filtered.filter(v => v.path.startsWith(selectedFolder))
-        }
-
-        // Filter by favorites
-        if (showFavorites) {
-            filtered = filtered.filter(v => v.isFavorite)
-        }
-
-        // Filter by tag
-        if (selectedTag) {
-            filtered = filtered.filter(v => v.tags.includes(selectedTag))
-        }
-
-        // Filter by search query
-        if (searchQuery) {
-            const query = searchQuery.toLowerCase()
-            filtered = filtered.filter(v =>
-                v.name.toLowerCase().includes(query) ||
-                v.tags.some(tag => tag.toLowerCase().includes(query))
-            )
-        }
-
-        // Apply Sorting
-        filtered.sort((a, b) => {
-            let comparison = 0
-            switch (sortField) {
-                case 'name':
-                    comparison = a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' })
-                    break
-                case 'date':
-                    comparison = new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
-                    break
-                case 'size':
-                    comparison = a.size - b.size
-                    break
-                case 'duration':
-                    comparison = (a.duration || 0) - (b.duration || 0)
-                    break
-            }
-            return sortOrder === 'asc' ? comparison : -comparison
-        })
-
-        return filtered
-    }, [videos, selectedFolder, selectedTag, showFavorites, searchQuery, sortField, sortOrder])
-
     // Get selected videos (must be after filteredVideos)
     const selectedVideos = useMemo(() => {
-        return filteredVideos.filter(v => selectedVideoIds.has(v.id))
-    }, [filteredVideos, selectedVideoIds])
+        return videos.filter(v => selectedVideoIds.has(v.id))
+    }, [videos, selectedVideoIds])
 
     // Get header title
     const getTitle = () => {
@@ -223,11 +170,11 @@ export default function VideoGrid({
                     <p className="text-sm text-cn-text-muted mt-0.5">
                         {selectionMode ? (
                             <span className="text-cn-accent">
-                                {selectedVideoIds.size} / {filteredVideos.length} 件選択中
+                                {selectedVideoIds.size} / {videos.length} 件選択中
                             </span>
                         ) : (
                             <>
-                                {filteredVideos.length} 件の動画
+                                {videos.length} 件の動画
                                 {isLoading && (
                                     <span className="ml-2 inline-flex items-center gap-1.5 text-cn-accent">
                                         <Loader2 className="w-3 h-3 animate-spin" />
@@ -291,8 +238,7 @@ export default function VideoGrid({
                             value={`${sortField}-${sortOrder}`}
                             onChange={(e) => {
                                 const [field, order] = e.target.value.split('-') as [SortField, SortOrder]
-                                setSortField(field)
-                                setSortOrder(order)
+                                onSortChange(field, order)
                             }}
                             className="bg-cn-surface hover:bg-cn-surface-hover border border-cn-border rounded-lg text-sm text-cn-text px-3 py-1.5 focus:outline-none focus:border-cn-accent transition-colors"
                         >
@@ -311,7 +257,7 @@ export default function VideoGrid({
 
             {/* Grid Container - Important: needs relative and min-size for AutoSizer */}
             <div className="flex-1 w-full h-full p-2 relative min-h-0 min-w-0">
-                {filteredVideos.length === 0 && !isLoading ? (
+                {videos.length === 0 && !isLoading ? (
                     <div className="flex flex-col items-center justify-center h-full text-cn-text-muted">
                         <div className="w-24 h-24 rounded-full bg-cn-surface flex items-center justify-center mb-4">
                             <Film className="w-12 h-12 opacity-30" />
@@ -339,7 +285,7 @@ export default function VideoGrid({
                                 // Calculate columns
                                 const columnCount = Math.floor((width - GAP) / (CARD_MIN_WIDTH + GAP)) || 1
                                 const columnWidth = (width - GAP) / columnCount
-                                const rowCount = Math.ceil(filteredVideos.length / columnCount)
+                                const rowCount = Math.ceil(videos.length / columnCount)
 
                                 return (
                                     <VirtualGrid
@@ -350,7 +296,7 @@ export default function VideoGrid({
                                         rowHeight={CARD_HEIGHT + GAP}
                                         width={width}
                                         itemData={{
-                                            videos: filteredVideos,
+                                            videos: videos,
                                             columnCount,
                                             selectionMode,
                                             selectedVideoIds,

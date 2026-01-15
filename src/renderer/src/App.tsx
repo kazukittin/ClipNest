@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect, useRef } from 'react'
+import { useState, useCallback, useEffect, useRef, useMemo } from 'react'
 import Sidebar from './components/Sidebar/Sidebar'
 import VideoGrid from './components/VideoGrid/VideoGrid'
 import VideoPlayer from './components/Player/VideoPlayer'
@@ -6,7 +6,7 @@ import VideoEditModal from './components/VideoEdit/VideoEditModal'
 import BatchRenameModal from './components/BatchRename/BatchRenameModal'
 import TitleBar from './components/TitleBar/TitleBar'
 import StreamVault from './components/StreamVault/StreamVault'
-import { Video, WatchedFolder } from './types/video'
+import { Video, WatchedFolder, SortField, SortOrder } from './types/video'
 import { FolderPlus } from 'lucide-react'
 
 function App(): JSX.Element {
@@ -22,6 +22,10 @@ function App(): JSX.Element {
     const [selectedTag, setSelectedTag] = useState<string | null>(null)
     const [showFavorites, setShowFavorites] = useState(false)
     const [searchQuery, setSearchQuery] = useState('')
+
+    // State for Sorting
+    const [sortField, setSortField] = useState<SortField>('name')
+    const [sortOrder, setSortOrder] = useState<SortOrder>('asc')
 
     // State for video player
     const [playingVideo, setPlayingVideo] = useState<Video | null>(null)
@@ -42,27 +46,58 @@ function App(): JSX.Element {
     // Track folders being scanned
     const scanningFoldersRef = useRef<Set<string>>(new Set())
 
+    // Batch video updates to reduce re-renders
+    const pendingVideosRef = useRef<Video[]>([])
+    const pendingPathsRef = useRef<Set<string>>(new Set())
+    const flushTimeoutRef = useRef<NodeJS.Timeout | null>(null)
+
+    // Flush pending videos to state
+    const flushPendingVideos = useCallback(() => {
+        if (pendingVideosRef.current.length === 0) return
+
+        const videosToAdd = [...pendingVideosRef.current]
+        pendingVideosRef.current = []
+        pendingPathsRef.current.clear()
+
+        setVideos(prev => {
+            const existingPaths = new Set(prev.map(v => v.path))
+            const newVideos = videosToAdd.filter(v => !existingPaths.has(v.path))
+            if (newVideos.length === 0) return prev
+            return [...prev, ...newVideos]
+        })
+    }, [])
+
     // Set up event listeners for progressive loading
     useEffect(() => {
-        // When a video file is ready, add it to the list
+        // When a video file is ready, batch it
         const removeVideoFileReadyListener = window.electron.onVideoFileReady((video) => {
-            setVideos(prev => {
-                // Avoid duplicates
-                const exists = prev.some(v => v.path === video.path)
-                if (exists) {
-                    return prev.map(v => v.path === video.path ? video : v)
-                }
-                // Add new video and sort by name
-                const updated = [...prev, video]
-                updated.sort((a, b) => a.name.localeCompare(b.name))
-                return updated
-            })
+            // Check for duplicates within pending batch
+            if (pendingPathsRef.current.has(video.path)) {
+                return
+            }
+            pendingPathsRef.current.add(video.path)
+            pendingVideosRef.current.push(video)
+
+            // Debounce flush - wait for more videos or flush after 300ms
+            if (flushTimeoutRef.current) {
+                clearTimeout(flushTimeoutRef.current)
+            }
+            flushTimeoutRef.current = setTimeout(() => {
+                flushPendingVideos()
+            }, 300)
         })
 
         // When scanning is complete
         const removeScanCompleteListener = window.electron.onScanFolderComplete((folderPath) => {
             console.log(`Scan complete for: ${folderPath}`)
             scanningFoldersRef.current.delete(folderPath)
+
+            // Flush any remaining pending videos immediately
+            if (flushTimeoutRef.current) {
+                clearTimeout(flushTimeoutRef.current)
+                flushTimeoutRef.current = null
+            }
+            flushPendingVideos()
 
             // If no more folders are being scanned, hide loading
             if (scanningFoldersRef.current.size === 0) {
@@ -74,13 +109,24 @@ function App(): JSX.Element {
         return () => {
             removeVideoFileReadyListener()
             removeScanCompleteListener()
+            if (flushTimeoutRef.current) {
+                clearTimeout(flushTimeoutRef.current)
+            }
         }
-    }, [])
+    }, [flushPendingVideos])
 
-    // Load saved folders on app startup
+    // Load saved folders and cached videos on app startup
     useEffect(() => {
-        const loadSavedFolders = async () => {
+        const loadInitialData = async () => {
             try {
+                // 1. Load cached videos first for instant UI
+                const cachedVideos = await window.electron.getCachedVideos()
+                if (cachedVideos.length > 0) {
+                    console.log(`Loaded ${cachedVideos.length} videos from cache`)
+                    setVideos(cachedVideos)
+                }
+
+                // 2. Load watched folders
                 const savedFolders = await window.electron.getWatchedFolders()
                 console.log('Loaded saved folders:', savedFolders)
 
@@ -114,14 +160,26 @@ function App(): JSX.Element {
                     }
                 }
             } catch (error) {
-                console.error('Error loading saved folders:', error)
+                console.error('Error loading initial data:', error)
             } finally {
                 setIsInitialized(true)
             }
         }
 
-        loadSavedFolders()
+        loadInitialData()
     }, [])
+
+    // Auto-save videos to cache when they change (debounced)
+    useEffect(() => {
+        if (!isInitialized || videos.length === 0) return
+
+        const timer = setTimeout(() => {
+            window.electron.saveVideoCache(videos)
+                .catch(err => console.error('Failed to save video cache:', err))
+        }, 2000) // Save after 2 seconds of inactivity
+
+        return () => clearTimeout(timer)
+    }, [videos, isInitialized])
 
     // Common function to import a folder by path (PROGRESSIVE)
     const importFolderByPath = useCallback(async (folderPath: string) => {
@@ -392,6 +450,80 @@ function App(): JSX.Element {
         }
     }, [watchedFolders])
 
+    // Filter and Sort Videos
+    const filteredVideos = useMemo(() => {
+        let filtered = [...videos]
+
+        // Filter by folder
+        if (selectedFolder) {
+            filtered = filtered.filter(v => v.path.startsWith(selectedFolder))
+        }
+
+        // Filter by favorites
+        if (showFavorites) {
+            filtered = filtered.filter(v => v.isFavorite)
+        }
+
+        // Filter by tag
+        if (selectedTag) {
+            filtered = filtered.filter(v => v.tags.includes(selectedTag))
+        }
+
+        // Filter by search query
+        if (searchQuery) {
+            const query = searchQuery.toLowerCase()
+            filtered = filtered.filter(v =>
+                v.name.toLowerCase().includes(query) ||
+                v.tags.some(tag => tag.toLowerCase().includes(query))
+            )
+        }
+
+        // Apply Sorting
+        filtered.sort((a, b) => {
+            let comparison = 0
+            switch (sortField) {
+                case 'name':
+                    comparison = a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' })
+                    break
+                case 'date':
+                    comparison = new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
+                    break
+                case 'size':
+                    comparison = a.size - b.size
+                    break
+                case 'duration':
+                    comparison = (a.duration || 0) - (b.duration || 0)
+                    break
+            }
+            return sortOrder === 'asc' ? comparison : -comparison
+        })
+
+        return filtered
+    }, [videos, selectedFolder, selectedTag, showFavorites, searchQuery, sortField, sortOrder])
+
+    // Handle Sort Change
+    const handleSortChange = useCallback((field: SortField, order: SortOrder) => {
+        setSortField(field)
+        setSortOrder(order)
+    }, [])
+
+    // Handle Player Navigation
+    const handleNextVideo = useCallback(() => {
+        if (!playingVideo) return
+        const currentIndex = filteredVideos.findIndex(v => v.path === playingVideo.path)
+        if (currentIndex !== -1 && currentIndex < filteredVideos.length - 1) {
+            setPlayingVideo(filteredVideos[currentIndex + 1])
+        }
+    }, [playingVideo, filteredVideos])
+
+    const handlePrevVideo = useCallback(() => {
+        if (!playingVideo) return
+        const currentIndex = filteredVideos.findIndex(v => v.path === playingVideo.path)
+        if (currentIndex > 0) {
+            setPlayingVideo(filteredVideos[currentIndex - 1])
+        }
+    }, [playingVideo, filteredVideos])
+
     // Get all unique tags from videos
     const allTags = Array.from(new Set(videos.flatMap(v => v.tags)))
 
@@ -411,6 +543,21 @@ function App(): JSX.Element {
             }
             return v
         }))
+    }, [])
+
+    // Handle cache clear
+    const handleClearCache = useCallback(async () => {
+        if (!confirm('キャッシュを削除して再読み込みしますか？\n（動画ファイル自体は削除されません）')) {
+            return
+        }
+
+        try {
+            await window.electron.clearVideoCache()
+            window.location.reload()
+        } catch (error) {
+            console.error('Error clearing cache:', error)
+            alert('キャッシュの削除に失敗しました')
+        }
     }, [])
 
     return (
@@ -440,17 +587,21 @@ function App(): JSX.Element {
                     onImportFolder={handleImportFolder}
                     searchQuery={searchQuery}
                     onSearchChange={setSearchQuery}
+                    onClearCache={handleClearCache}
                 />
 
                 {/* Main Content */}
                 <main className="flex-1 flex flex-col overflow-hidden">
                     {currentView === 'library' ? (
                         <VideoGrid
-                            videos={videos}
+                            videos={filteredVideos}
                             selectedFolder={selectedFolder}
                             selectedTag={selectedTag}
                             showFavorites={showFavorites}
                             searchQuery={searchQuery}
+                            sortField={sortField}
+                            sortOrder={sortOrder}
+                            onSortChange={handleSortChange}
                             isLoading={isLoading}
                             loadingMessage={loadingMessage}
                             onVideoPlay={setPlayingVideo}
@@ -471,6 +622,8 @@ function App(): JSX.Element {
                     onClose={() => setPlayingVideo(null)}
                     onToggleFavorite={() => handleToggleFavorite(playingVideo.path)}
                     onUpdateTags={(tags) => handleUpdateTags(playingVideo.path, tags)}
+                    onNext={handleNextVideo}
+                    onPrev={handlePrevVideo}
                 />
             )}
 

@@ -9,7 +9,8 @@ import {
     ChevronRight,
     Home,
     Film,
-    Download
+    Download,
+    Trash2
 } from 'lucide-react'
 import { WatchedFolder } from '../../types/video'
 
@@ -27,6 +28,7 @@ interface SidebarProps {
     onImportFolder: () => void
     searchQuery: string
     onSearchChange: (query: string) => void
+    onClearCache: () => void
 }
 
 export default function Sidebar({
@@ -42,7 +44,8 @@ export default function Sidebar({
     onFavoritesToggle,
     onImportFolder,
     searchQuery,
-    onSearchChange
+    onSearchChange,
+    onClearCache
 }: SidebarProps): JSX.Element {
     const [foldersExpanded, setFoldersExpanded] = useState(true)
     const [tagsExpanded, setTagsExpanded] = useState(true)
@@ -222,8 +225,16 @@ export default function Sidebar({
             </nav>
 
             {/* Footer */}
-            <div className="p-3 border-t border-cn-border">
-                <p className="text-[10px] text-cn-text-muted text-center">
+            <div className="p-3 border-t border-cn-border space-y-2">
+                <button
+                    onClick={onClearCache}
+                    className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded-lg text-xs text-cn-text-muted hover:text-cn-error hover:bg-cn-error/10 transition-colors"
+                    title="キャッシュをクリアして再読み込み"
+                >
+                    <Trash2 className="w-3.5 h-3.5" />
+                    <span>キャッシュを削除</span>
+                </button>
+                <p className="text-[10px] text-cn-text-muted text-center pt-1">
                     ClipNest v1.0.0
                 </p>
             </div>

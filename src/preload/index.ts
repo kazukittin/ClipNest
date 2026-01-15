@@ -22,6 +22,15 @@ export interface VideoMetadata {
     lastPlayedTime?: number
 }
 
+// Product data retrieved from online
+export interface ProductData {
+    title: string
+    tags: string[]
+    maker?: string
+    actress?: string[]
+    thumbnailUrl?: string
+}
+
 // Watched folder interface
 export interface WatchedFolder {
     path: string
@@ -47,6 +56,11 @@ export interface ElectronAPI {
     getWatchedFolders: () => Promise<WatchedFolder[]>
     saveWatchedFolder: (folder: WatchedFolder) => Promise<void>
     removeWatchedFolder: (folderPath: string) => Promise<void>
+    // Video cache operations
+    getCachedVideos: () => Promise<VideoFile[]>
+    saveVideoCache: (videos: VideoFile[]) => Promise<void>
+    clearVideoCache: () => Promise<void>
+    fetchVideoProductData: (productCode: string) => Promise<ProductData | null>
     // File operations
     renameVideo: (oldPath: string, newName: string) => Promise<{ success: boolean, newPath: string | null, error?: string }>
     deleteVideo: (filePath: string) => Promise<{ success: boolean, error?: string }>
@@ -86,6 +100,11 @@ const electronAPI: ElectronAPI = {
     getWatchedFolders: () => ipcRenderer.invoke('get-watched-folders'),
     saveWatchedFolder: (folder: WatchedFolder) => ipcRenderer.invoke('save-watched-folder', folder),
     removeWatchedFolder: (folderPath: string) => ipcRenderer.invoke('remove-watched-folder', folderPath),
+    // Video cache operations
+    getCachedVideos: () => ipcRenderer.invoke('get-cached-videos'),
+    saveVideoCache: (videos: VideoFile[]) => ipcRenderer.invoke('save-video-cache', videos),
+    clearVideoCache: () => ipcRenderer.invoke('clear-video-cache'),
+    fetchVideoProductData: (productCode: string) => ipcRenderer.invoke('fetch-video-product-data', productCode),
     // File operations
     renameVideo: (oldPath: string, newName: string) => ipcRenderer.invoke('rename-video', oldPath, newName),
     deleteVideo: (filePath: string) => ipcRenderer.invoke('delete-video', filePath),

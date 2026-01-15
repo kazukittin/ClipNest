@@ -19,6 +19,14 @@ export interface VideoMetadata {
     lastPlayedTime?: number
 }
 
+export interface ProductData {
+    title: string
+    tags: string[]
+    maker?: string
+    actress?: string[]
+    thumbnailUrl?: string
+}
+
 export interface WatchedFolder {
     path: string
     name: string
@@ -42,6 +50,11 @@ export interface ElectronAPI {
     getWatchedFolders: () => Promise<WatchedFolder[]>
     saveWatchedFolder: (folder: WatchedFolder) => Promise<void>
     removeWatchedFolder: (folderPath: string) => Promise<void>
+    // Video cache operations
+    getCachedVideos: () => Promise<VideoFile[]>
+    saveVideoCache: (videos: VideoFile[]) => Promise<void>
+    clearVideoCache: () => Promise<void>
+    fetchVideoProductData: (productCode: string) => Promise<ProductData | null>
     // File operations
     renameVideo: (oldPath: string, newName: string) => Promise<{ success: boolean, newPath: string | null, error?: string }>
     deleteVideo: (filePath: string) => Promise<{ success: boolean, error?: string }>

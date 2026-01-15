@@ -1,4 +1,16 @@
 import { app, BrowserWindow, shell, ipcMain, dialog, protocol } from 'electron'
+
+// Polyfill File for undici/cheerio support in Electron Node environment
+if (typeof global.File === 'undefined') {
+    try {
+        const { File } = require('node:buffer')
+        if (File) {
+            global.File = File
+        }
+    } catch (e) {
+        console.warn('Failed to polyfill File:', e)
+    }
+}
 import { join, basename, extname } from 'path'
 import { readdir, stat, mkdir, access, readFile, unlink, rename } from 'fs/promises'
 import { spawn } from 'child_process'
@@ -81,6 +93,7 @@ interface StoreSchema {
     videoMetadata: Record<string, VideoMetadata>
     watchedFolders: WatchedFolder[]
     downloadPath: string
+    cachedVideos: VideoFile[]
 }
 
 // ========================================
@@ -92,9 +105,41 @@ const store = new Store<StoreSchema>({
     defaults: {
         videoMetadata: {},
         watchedFolders: [],
-        downloadPath: ''
+        downloadPath: '',
+        cachedVideos: []
     }
 })
+
+// ========================================
+// Video Cache Functions
+// ========================================
+
+function getCachedVideos(): VideoFile[] {
+    return store.get('cachedVideos', [])
+}
+
+function saveCachedVideos(videos: VideoFile[]): void {
+    store.set('cachedVideos', videos)
+    console.log(`Saved ${videos.length} videos to cache`)
+}
+
+function updateVideoCache(newVideos: VideoFile[]): void {
+    const existing = getCachedVideos()
+    const existingPaths = new Set(existing.map(v => v.path))
+    const videosToAdd = newVideos.filter(v => !existingPaths.has(v.path))
+    if (videosToAdd.length > 0) {
+        saveCachedVideos([...existing, ...videosToAdd])
+    }
+}
+
+function removeFromVideoCache(videoPaths: string[]): void {
+    const pathsToRemove = new Set(videoPaths)
+    const existing = getCachedVideos()
+    const filtered = existing.filter(v => !pathsToRemove.has(v.path))
+    if (filtered.length !== existing.length) {
+        saveCachedVideos(filtered)
+    }
+}
 
 // Get download path (returns default if not set)
 function getDownloadPath(): string {
@@ -590,6 +635,42 @@ ipcMain.handle('remove-watched-folder', async (_event, folderPath: string): Prom
 })
 
 // ========================================
+// Video Cache IPC Handlers
+// ========================================
+
+// Handler: Get cached videos (for instant startup)
+ipcMain.handle('get-cached-videos', async (): Promise<VideoFile[]> => {
+    const cached = getCachedVideos()
+    console.log(`Returning ${cached.length} cached videos`)
+    return cached
+})
+
+// Handler: Save videos to cache
+ipcMain.handle('save-video-cache', async (_event, videos: VideoFile[]): Promise<void> => {
+    saveCachedVideos(videos)
+})
+
+// Handler: Clear video cache
+ipcMain.handle('clear-video-cache', async (): Promise<void> => {
+    // 1. Clear store
+    saveCachedVideos([])
+
+    // 2. Clear thumbnails
+    try {
+        const thumbDir = await getThumbnailsDir()
+        if (existsSync(thumbDir)) {
+            const files = await readdir(thumbDir)
+            for (const file of files) {
+                await unlink(join(thumbDir, file))
+            }
+        }
+        console.log('Video cache and thumbnails cleared')
+    } catch (error) {
+        console.error('Error clearing thumbnails:', error)
+    }
+})
+
+// ========================================
 // File Operations IPC Handlers
 // ========================================
 
@@ -651,6 +732,12 @@ ipcMain.handle('batch-rename-videos', async (
         const num = (startNumber + i).toString().padStart(padLength, '0')
         const newName = `${prefix}${num}`
         const newPath = join(dir, `${newName}${extension}`)
+
+        // Skip if name is unchanged
+        if (newPath === oldPath) {
+            results.push({ oldPath, newPath })
+            continue
+        }
 
         // Check for conflicts with existing files (not in our batch)
         if (existsSync(newPath) && !videoPaths.includes(newPath)) {
@@ -858,6 +945,103 @@ ipcMain.handle('cancel-download', async (_event, id: string) => {
         return { success: true }
     }
     return { success: false }
+})
+
+// Fetch Product Data (Scraping)
+ipcMain.handle('fetch-video-product-data', async (_, code: string) => {
+    if (!code) return null
+
+    // Dynamic require to prevent startup errors with undici/File
+    const axios = require('axios')
+    const cheerio = require('cheerio')
+
+    const userAgent = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+
+    // Helper: Fetch DMM/FANZA
+    const fetchDMM = async (searchCode: string) => {
+        try {
+            // Search first
+            const searchUrl = `https://www.dmm.co.jp/search/=/searchstr=${encodeURIComponent(searchCode)}/`
+            const { data: searchData } = await axios.get(searchUrl, { headers: { 'User-Agent': userAgent } })
+            const $search = cheerio.load(searchData)
+
+            const detailLink = $search('#list li').first().find('p.tmb a').attr('href')
+            if (!detailLink) return null
+
+            // Fetch detail
+            const { data: detailData } = await axios.get(detailLink, { headers: { 'User-Agent': userAgent } })
+            const $ = cheerio.load(detailData)
+
+            const title = $('#title').text().trim()
+            const maker = $('.maker-name').text().trim()
+            const tags: string[] = []
+            $('.genre-list a').each((_, el) => {
+                const t = $(el).text().trim()
+                if (t) tags.push(t)
+            })
+            const act = $('#performer a').text().trim()
+
+            // Thumbnail: try to find package image
+            const thumb = $('#sample-video a').attr('href') || $('#package-src').attr('src')
+
+            return {
+                title,
+                tags,
+                maker,
+                actress: act ? [act] : [],
+                thumbnailUrl: thumb
+            }
+        } catch (e) {
+            console.error('DMM Fetch Error:', e)
+            return null
+        }
+    }
+
+    // Helper: Fetch FC2
+    const fetchFC2 = async (fc2Code: string) => {
+        // Extract ID
+        const match = fc2Code.match(/(\d{5,})/)
+        if (!match) return null
+        const id = match[1]
+
+        try {
+            const url = `https://adult.contents.fc2.com/article/${id}/`
+            const { data } = await axios.get(url, {
+                headers: { 'User-Agent': userAgent, 'Cookie': 'age_check=1' }
+            })
+            const $ = cheerio.load(data)
+
+            const title = $('.items_article_headerInfo h3').text().trim()
+            const tags: string[] = []
+            $('.tag-tag').each((_, el) => {
+                const t = $(el).text().trim()
+                if (t) tags.push(t)
+            })
+
+            // FC2 specific selector for seller/maker
+            const maker = $('.items_article_headerInfo .items_article_Seller p a').text().trim()
+
+            return {
+                title,
+                tags,
+                maker,
+                thumbnailUrl: '' // Difficult to get without more logic sometimes
+            }
+        } catch (e) {
+            console.error('FC2 Fetch Error:', e)
+            return null
+        }
+    }
+
+    // Determine handler
+    // FC2 pattern: contains FC2, or just 6+ digits, or xxx-xxx-xxx (FC2-PPV-...)
+    if (code.toUpperCase().includes('FC2') || /^\d{6,}$/.test(code)) {
+        const res = await fetchFC2(code)
+        if (res) return res
+    }
+
+    // Default to DMM for others (most AV codes)
+    return await fetchDMM(code)
 })
 
 function setupProcessListeners(process: any, id: string, event: Electron.IpcMainInvokeEvent) {
