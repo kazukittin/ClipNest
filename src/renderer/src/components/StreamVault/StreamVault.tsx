@@ -11,7 +11,10 @@ import {
     XCircle,
     Clock,
     Link as LinkIcon,
-    Folder
+    Folder,
+    AlertTriangle,
+    ChevronDown,
+    ChevronUp
 } from 'lucide-react'
 
 // Types for our download tasks
@@ -24,18 +27,66 @@ interface DownloadTask {
     speed?: string
     eta?: string
     error?: string
+    errorDetails?: string
+    warnings?: string[]
     path?: string
     timestamp: number
 }
 
+// Storage keys
+const STORAGE_KEY_QUEUE = 'streamvault_queue'
+const STORAGE_KEY_HISTORY = 'streamvault_history'
+
+// Helper functions to load/save queue and history
+const loadFromStorage = <T,>(key: string, defaultValue: T): T => {
+    try {
+        const saved = localStorage.getItem(key)
+        if (saved) {
+            return JSON.parse(saved) as T
+        }
+    } catch (e) {
+        console.error(`Failed to load ${key} from localStorage:`, e)
+    }
+    return defaultValue
+}
+
+const saveToStorage = <T,>(key: string, value: T): void => {
+    try {
+        localStorage.setItem(key, JSON.stringify(value))
+    } catch (e) {
+        console.error(`Failed to save ${key} to localStorage:`, e)
+    }
+}
+
 export default function StreamVault(): JSX.Element {
     const [url, setUrl] = useState('')
-    const [queue, setQueue] = useState<DownloadTask[]>([])
-    const [history, setHistory] = useState<DownloadTask[]>([])
+    // Initialize queue from localStorage, resetting any 'downloading' status to 'queued'
+    const [queue, setQueue] = useState<DownloadTask[]>(() => {
+        const saved = loadFromStorage<DownloadTask[]>(STORAGE_KEY_QUEUE, [])
+        // Reset any downloading tasks to queued since we're reloading the page
+        return saved.map(task => ({
+            ...task,
+            status: task.status === 'downloading' ? 'queued' : task.status
+        }))
+    })
+    const [history, setHistory] = useState<DownloadTask[]>(() =>
+        loadFromStorage<DownloadTask[]>(STORAGE_KEY_HISTORY, [])
+    )
     const [activeTab, setActiveTab] = useState<'queue' | 'history'>('queue')
     const [isDownloading, setIsDownloading] = useState(false)
     const [settingsOpen, setSettingsOpen] = useState(false)
     const [downloadPath, setDownloadPath] = useState<string>('')
+    const [expandedTasks, setExpandedTasks] = useState<Set<string>>(new Set())
+
+    // Save queue to localStorage whenever it changes
+    useEffect(() => {
+        saveToStorage(STORAGE_KEY_QUEUE, queue)
+    }, [queue])
+
+    // Save history to localStorage whenever it changes
+    useEffect(() => {
+        saveToStorage(STORAGE_KEY_HISTORY, history)
+    }, [history])
 
     // Load download path on mount
     useEffect(() => {
@@ -149,16 +200,29 @@ export default function StreamVault(): JSX.Element {
             }
         })
 
-        const removeErrorListener = window.electron.onDownloadError(({ id, error }) => {
+        const removeErrorListener = window.electron.onDownloadError(({ id, error, details }) => {
             setQueue(prev => prev.map(t =>
-                t.id === id ? { ...t, status: 'error', error } : t
+                t.id === id ? { ...t, status: 'error', error, errorDetails: details } : t
             ))
             setIsDownloading(false)
+        })
+
+        const removeWarningListener = window.electron.onDownloadWarning(({ id, warning }) => {
+            setQueue(prev => prev.map(t => {
+                if (t.id === id) {
+                    const warnings = t.warnings || []
+                    // Keep only last 5 warnings
+                    const newWarnings = [...warnings, warning].slice(-5)
+                    return { ...t, warnings: newWarnings }
+                }
+                return t
+            }))
         })
 
         return () => {
             removeProgressListener()
             removeErrorListener()
+            removeWarningListener()
         }
     }, [])
 
@@ -281,42 +345,115 @@ export default function StreamVault(): JSX.Element {
                                 <p>ダウンロードキューは空です</p>
                             </div>
                         ) : (
-                            queue.map(task => (
-                                <div key={task.id} className="bg-cn-surface border border-cn-border rounded-xl p-4 flex flex-col gap-3 group hover:border-cn-border/80 transition-colors">
-                                    <div className="flex justify-between items-start">
-                                        <div className="flex-1 min-w-0">
-                                            <h4 className="font-medium truncate pr-4" title={task.url}>
-                                                {task.title || task.url}
-                                            </h4>
-                                            <div className="flex items-center gap-2 mt-1">
-                                                <span className={`text-xs px-2 py-0.5 rounded-full ${task.status === 'downloading' ? 'bg-blue-500/20 text-blue-400' : 'bg-cn-border text-cn-text-muted'
-                                                    }`}>
-                                                    {task.status === 'downloading' ? 'ダウンロード中' : '待機中'}
-                                                </span>
-                                                <span className="text-xs text-cn-text-muted">{task.speed}</span>
+                            queue.map(task => {
+                                const isExpanded = expandedTasks.has(task.id)
+                                const toggleExpand = () => {
+                                    setExpandedTasks(prev => {
+                                        const next = new Set(prev)
+                                        if (next.has(task.id)) {
+                                            next.delete(task.id)
+                                        } else {
+                                            next.add(task.id)
+                                        }
+                                        return next
+                                    })
+                                }
+                                const hasDetails = task.error || task.errorDetails || (task.warnings && task.warnings.length > 0)
+
+                                return (
+                                    <div key={task.id} className={`bg-cn-surface border rounded-xl p-4 flex flex-col gap-3 group transition-colors ${task.status === 'error' ? 'border-red-500/50' : 'border-cn-border hover:border-cn-border/80'
+                                        }`}>
+                                        <div className="flex justify-between items-start">
+                                            <div className="flex-1 min-w-0">
+                                                <h4 className="font-medium truncate pr-4" title={task.url}>
+                                                    {task.title || task.url}
+                                                </h4>
+                                                <div className="flex items-center gap-2 mt-1 flex-wrap">
+                                                    <span className={`text-xs px-2 py-0.5 rounded-full ${task.status === 'downloading'
+                                                        ? 'bg-blue-500/20 text-blue-400'
+                                                        : task.status === 'error'
+                                                            ? 'bg-red-500/20 text-red-400'
+                                                            : 'bg-cn-border text-cn-text-muted'
+                                                        }`}>
+                                                        {task.status === 'downloading' ? 'ダウンロード中'
+                                                            : task.status === 'error' ? 'エラー'
+                                                                : '待機中'}
+                                                    </span>
+                                                    {task.speed && <span className="text-xs text-cn-text-muted">{task.speed}</span>}
+                                                    {task.warnings && task.warnings.length > 0 && (
+                                                        <span className="text-xs px-2 py-0.5 rounded-full bg-yellow-500/20 text-yellow-400 flex items-center gap-1">
+                                                            <AlertTriangle className="w-3 h-3" />
+                                                            警告 {task.warnings.length}件
+                                                        </span>
+                                                    )}
+                                                </div>
+                                            </div>
+                                            <div className="flex items-center gap-1">
+                                                {hasDetails && (
+                                                    <button
+                                                        onClick={toggleExpand}
+                                                        className="text-cn-text-muted hover:text-cn-accent transition-colors p-1"
+                                                        title="詳細を表示"
+                                                    >
+                                                        {isExpanded ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+                                                    </button>
+                                                )}
+                                                <button
+                                                    onClick={() => handleRemoveFromQueue(task.id)}
+                                                    className="text-cn-text-muted hover:text-cn-error transition-colors p-1 opacity-0 group-hover:opacity-100"
+                                                >
+                                                    <Trash2 className="w-4 h-4" />
+                                                </button>
                                             </div>
                                         </div>
-                                        <button
-                                            onClick={() => handleRemoveFromQueue(task.id)}
-                                            className="text-cn-text-muted hover:text-cn-error transition-colors p-1 opacity-0 group-hover:opacity-100"
-                                        >
-                                            <Trash2 className="w-4 h-4" />
-                                        </button>
-                                    </div>
 
-                                    {/* Progress Bar */}
-                                    <div className="w-full h-1.5 bg-cn-dark rounded-full overflow-hidden">
-                                        <div
-                                            className="h-full bg-gradient-to-r from-cn-accent to-purple-500 transition-all duration-300 ease-out"
-                                            style={{ width: `${task.progress}%` }}
-                                        />
+                                        {/* Error display */}
+                                        {task.status === 'error' && task.error && (
+                                            <div className="flex items-start gap-2 text-red-400 text-sm bg-red-500/10 rounded-lg p-2">
+                                                <XCircle className="w-4 h-4 mt-0.5 flex-shrink-0" />
+                                                <span>{task.error}</span>
+                                            </div>
+                                        )}
+
+                                        {/* Expanded details */}
+                                        {isExpanded && (
+                                            <div className="space-y-2">
+                                                {task.errorDetails && (
+                                                    <div className="bg-cn-dark rounded-lg p-3">
+                                                        <div className="text-xs text-cn-text-muted mb-1">エラー詳細:</div>
+                                                        <pre className="text-xs text-red-300 whitespace-pre-wrap break-all font-mono max-h-40 overflow-y-auto">
+                                                            {task.errorDetails}
+                                                        </pre>
+                                                    </div>
+                                                )}
+                                                {task.warnings && task.warnings.length > 0 && (
+                                                    <div className="bg-cn-dark rounded-lg p-3">
+                                                        <div className="text-xs text-cn-text-muted mb-1">警告ログ (最新5件):</div>
+                                                        <pre className="text-xs text-yellow-300 whitespace-pre-wrap break-all font-mono max-h-32 overflow-y-auto">
+                                                            {task.warnings.join('\n')}
+                                                        </pre>
+                                                    </div>
+                                                )}
+                                            </div>
+                                        )}
+
+                                        {/* Progress Bar */}
+                                        <div className={`w-full h-1.5 bg-cn-dark rounded-full overflow-hidden ${task.status === 'error' ? 'opacity-50' : ''}`}>
+                                            <div
+                                                className={`h-full transition-all duration-300 ease-out ${task.status === 'error'
+                                                    ? 'bg-red-500'
+                                                    : 'bg-gradient-to-r from-cn-accent to-purple-500'
+                                                    }`}
+                                                style={{ width: `${task.progress}%` }}
+                                            />
+                                        </div>
+                                        <div className="flex justify-between text-xs text-cn-text-muted">
+                                            <span>{Math.round(task.progress)}%</span>
+                                            {task.eta && <span>残り {task.eta}</span>}
+                                        </div>
                                     </div>
-                                    <div className="flex justify-between text-xs text-cn-text-muted">
-                                        <span>{Math.round(task.progress)}%</span>
-                                        {task.eta && <span>残り {task.eta}</span>}
-                                    </div>
-                                </div>
-                            ))
+                                )
+                            })
                         )}
                     </div>
                 ) : (

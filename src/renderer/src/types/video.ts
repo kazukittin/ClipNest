@@ -85,7 +85,12 @@ export interface ElectronAPI {
     setDownloadPath: (path: string) => Promise<{ success: boolean, path: string }>
     selectDownloadFolder: () => Promise<string | null>
     onDownloadProgress: (callback: (data: { id: string, progress: number, status: string }) => void) => () => void
-    onDownloadError: (callback: (data: { id: string, error: string }) => void) => () => void
+    onDownloadError: (callback: (data: { id: string, error: string, details?: string }) => void) => () => void
+    onDownloadWarning: (callback: (data: { id: string, warning: string, fullLog: string }) => void) => () => void
+    // Video conversion operations
+    convertToMp4: (filePath: string, deleteOriginal?: boolean) => Promise<{ success: boolean, newPath?: string, error?: string }>
+    cancelConversion: (filePath: string) => Promise<{ success: boolean }>
+    onConversionProgress: (callback: (data: { filePath: string, progress: number, status: string, newPath?: string, error?: string }) => void) => () => void
 }
 
 // Extend Window interface

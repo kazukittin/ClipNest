@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react'
-import { X, Save, Trash2, Tag, FileText, AlertTriangle, Search, Loader2, Globe } from 'lucide-react'
+import { X, Save, Trash2, Tag, FileText, AlertTriangle, Search, Loader2, Globe, RefreshCw } from 'lucide-react'
 import { Video } from '../../types/video'
 
 interface VideoEditModalProps {
@@ -21,6 +21,9 @@ export default function VideoEditModal({
     const [isDeleting, setIsDeleting] = useState(false)
     const [productCode, setProductCode] = useState('')
     const [isFetchingInfo, setIsFetchingInfo] = useState(false)
+    const [isConverting, setIsConverting] = useState(false)
+    const [conversionProgress, setConversionProgress] = useState(0)
+    const [deleteAfterConvert, setDeleteAfterConvert] = useState(true)
     const nameInputRef = useRef<HTMLInputElement>(null)
 
     // Focus name input on mount
@@ -101,9 +104,56 @@ export default function VideoEditModal({
     }
 
     const handleBackgroundClick = (e: React.MouseEvent) => {
-        if (e.target === e.currentTarget) {
+        if (e.target === e.currentTarget && !isConverting) {
             onClose()
         }
+    }
+
+    // Check if video can be converted (non-mp4)
+    const canConvert = video.extension.toLowerCase() !== '.mp4'
+    const supportedFormats = ['.mkv', '.avi', '.mov', '.wmv', '.flv', '.webm', '.m4v', '.ts', '.mts']
+    const isSupported = supportedFormats.includes(video.extension.toLowerCase())
+
+    // Handle MP4 conversion
+    const handleConvert = async () => {
+        setIsConverting(true)
+        setConversionProgress(0)
+
+        // Listen for progress updates
+        const removeListener = window.electron.onConversionProgress(({ filePath, progress, status, newPath, error }) => {
+            if (filePath === video.path) {
+                setConversionProgress(progress)
+                if (status === 'completed') {
+                    setIsConverting(false)
+                    alert(`変換完了: ${newPath}`)
+                    onClose()
+                } else if (status === 'error') {
+                    setIsConverting(false)
+                    alert(`変換失敗: ${error}`)
+                }
+            }
+        })
+
+        try {
+            const result = await window.electron.convertToMp4(video.path, deleteAfterConvert)
+            if (!result.success && result.error) {
+                alert(`変換失敗: ${result.error}`)
+                setIsConverting(false)
+            }
+        } catch (error) {
+            console.error('Conversion error:', error)
+            alert('変換中にエラーが発生しました')
+            setIsConverting(false)
+        }
+
+        return () => removeListener()
+    }
+
+    // Cancel conversion
+    const handleCancelConversion = async () => {
+        await window.electron.cancelConversion(video.path)
+        setIsConverting(false)
+        setConversionProgress(0)
     }
 
     return (
@@ -214,6 +264,67 @@ export default function VideoEditModal({
                             })}
                         </div>
                     )}
+
+                    {/* MP4 Conversion (only for non-mp4 files) */}
+                    {canConvert && (
+                        <>
+                            <div className="h-px bg-white/10" />
+                            <div>
+                                <label className="flex items-center gap-2 text-sm font-medium text-white/80 mb-2">
+                                    <RefreshCw className="w-4 h-4" />
+                                    MP4に変換
+                                </label>
+                                {isSupported ? (
+                                    <div className="space-y-3">
+                                        <div className="flex items-center gap-2">
+                                            <input
+                                                type="checkbox"
+                                                id="deleteAfterConvert"
+                                                checked={deleteAfterConvert}
+                                                onChange={(e) => setDeleteAfterConvert(e.target.checked)}
+                                                className="w-4 h-4 rounded bg-cn-dark border-cn-border text-cn-accent focus:ring-cn-accent"
+                                            />
+                                            <label htmlFor="deleteAfterConvert" className="text-sm text-white/70">
+                                                変換後に元ファイルを削除
+                                            </label>
+                                        </div>
+                                        {isConverting ? (
+                                            <div className="space-y-2">
+                                                <div className="flex items-center justify-between text-sm">
+                                                    <span className="text-white/70">変換中...</span>
+                                                    <span className="text-cn-accent">{conversionProgress}%</span>
+                                                </div>
+                                                <div className="w-full h-2 bg-cn-dark rounded-full overflow-hidden">
+                                                    <div
+                                                        className="h-full bg-gradient-to-r from-cn-accent to-purple-500 transition-all duration-300"
+                                                        style={{ width: `${conversionProgress}%` }}
+                                                    />
+                                                </div>
+                                                <button
+                                                    onClick={handleCancelConversion}
+                                                    className="text-sm text-cn-error hover:underline"
+                                                >
+                                                    キャンセル
+                                                </button>
+                                            </div>
+                                        ) : (
+                                            <button
+                                                onClick={handleConvert}
+                                                className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-blue-500 to-cyan-500 text-white text-sm font-medium rounded-lg hover:opacity-90 transition-opacity"
+                                            >
+                                                <RefreshCw className="w-4 h-4" />
+                                                {video.extension.toUpperCase().slice(1)} → MP4 に変換
+                                            </button>
+                                        )}
+                                    </div>
+                                ) : (
+                                    <p className="text-sm text-white/50">
+                                        この形式 ({video.extension}) は変換に対応していません
+                                    </p>
+                                )}
+                            </div>
+                        </>
+                    )}
                 </div>
 
                 {/* Delete Confirmation */}
@@ -253,7 +364,8 @@ export default function VideoEditModal({
                     {/* Delete Button */}
                     <button
                         onClick={() => setShowDeleteConfirm(true)}
-                        className="flex items-center gap-2 px-3 py-2 text-cn-error hover:bg-cn-error/10 rounded-lg transition-colors"
+                        disabled={isConverting}
+                        className="flex items-center gap-2 px-3 py-2 text-cn-error hover:bg-cn-error/10 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                     >
                         <Trash2 className="w-4 h-4" />
                         <span className="text-sm">削除</span>
@@ -269,7 +381,7 @@ export default function VideoEditModal({
                         </button>
                         <button
                             onClick={handleSave}
-                            disabled={!name.trim()}
+                            disabled={!name.trim() || isConverting}
                             className="flex items-center gap-2 px-4 py-2 bg-cn-accent text-white text-sm font-medium rounded-lg hover:bg-cn-accent-hover disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
                         >
                             <Save className="w-4 h-4" />

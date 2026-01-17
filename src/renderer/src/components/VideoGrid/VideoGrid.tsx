@@ -1,5 +1,5 @@
-import { useMemo, useState } from 'react'
-import { Film, Heart, Clock, HardDrive, Loader2, Play, ArrowUpDown, CheckSquare, Square, FileText } from 'lucide-react'
+import { useMemo, useState, useEffect, useRef } from 'react'
+import { Film, Heart, Clock, HardDrive, Loader2, Play, ArrowUpDown, CheckSquare, Square, FileText, RefreshCw } from 'lucide-react'
 import { FixedSizeGrid as Grid } from 'react-window'
 import AutoSizer from 'react-virtualized-auto-sizer'
 import { Video, SortField, SortOrder } from '../../types/video'
@@ -18,6 +18,7 @@ interface VideoGridProps {
     onToggleFavorite: (videoPath: string) => void
     onVideoEdit: (video: Video) => void
     onBatchRename?: (videos: Video[]) => void
+    onBatchConvert?: (videos: Video[]) => void
     onSortChange: (field: SortField, order: SortOrder) => void
 }
 
@@ -66,11 +67,19 @@ export default function VideoGrid({
     onToggleFavorite,
     onVideoEdit,
     onBatchRename,
+    onBatchConvert,
     onSortChange
 }: VideoGridProps): JSX.Element {
     // Selection mode state
     const [selectionMode, setSelectionMode] = useState(false)
     const [selectedVideoIds, setSelectedVideoIds] = useState<Set<string>>(new Set())
+    // Batch conversion state
+    const [isConverting, setIsConverting] = useState(false)
+    const [conversionProgress, setConversionProgress] = useState({ current: 0, total: 0, currentFile: '' })
+    const [fileProgress, setFileProgress] = useState(0)
+    const [conversionCancelled, setConversionCancelled] = useState(false)
+    const currentFilePathRef = useRef<string>('')
+    const lastProgressRef = useRef<number>(0)
 
     // Clear selection when exiting selection mode
     const handleToggleSelectionMode = () => {
@@ -108,6 +117,103 @@ export default function VideoGrid({
     const selectedVideos = useMemo(() => {
         return videos.filter(v => selectedVideoIds.has(v.id))
     }, [videos, selectedVideoIds])
+
+    // Get convertible videos (non-mp4)
+    const convertibleVideos = useMemo(() => {
+        const supportedFormats = ['.mkv', '.avi', '.mov', '.wmv', '.flv', '.webm', '.m4v', '.ts', '.mts']
+        return selectedVideos.filter(v => supportedFormats.includes(v.extension.toLowerCase()))
+    }, [selectedVideos])
+
+    // Handle batch conversion
+    const handleBatchConvert = async () => {
+        if (convertibleVideos.length === 0) {
+            alert('変換可能な動画が選択されていません\n(MP4ファイルはスキップされます)')
+            return
+        }
+
+        const skippedCount = selectedVideos.length - convertibleVideos.length
+        const confirmMsg = skippedCount > 0
+            ? `${convertibleVideos.length}件の動画をMP4に変換します\n(${skippedCount}件のMP4/非対応形式はスキップ)`
+            : `${convertibleVideos.length}件の動画をMP4に変換します`
+
+        if (!confirm(confirmMsg)) return
+
+        setIsConverting(true)
+        setConversionCancelled(false)
+        setConversionProgress({ current: 0, total: convertibleVideos.length, currentFile: '' })
+        setFileProgress(0)
+        lastProgressRef.current = 0
+
+        // Set up progress listener
+        const removeProgressListener = window.electron.onConversionProgress(({ filePath, progress, status }) => {
+            // Only update progress if it's for the current file and is an increase
+            if (filePath === currentFilePathRef.current && progress >= lastProgressRef.current) {
+                lastProgressRef.current = progress
+                setFileProgress(progress)
+            }
+        })
+
+        let cancelled = false
+
+        for (let i = 0; i < convertibleVideos.length; i++) {
+            if (cancelled) break
+
+            const video = convertibleVideos[i]
+            currentFilePathRef.current = video.path
+            lastProgressRef.current = 0
+            setConversionProgress({
+                current: i + 1,
+                total: convertibleVideos.length,
+                currentFile: video.name
+            })
+            setFileProgress(0)
+
+            try {
+                const result = await window.electron.convertToMp4(video.path, true)
+                if (!result.success) {
+                    console.error(`Failed to convert ${video.name}: ${result.error}`)
+                }
+            } catch (error) {
+                console.error(`Failed to convert ${video.name}:`, error)
+            }
+
+            // Check if cancelled during conversion
+            if (conversionCancelled) {
+                cancelled = true
+            }
+
+            // Every 5 files, pause briefly to allow memory to be freed
+            if ((i + 1) % 5 === 0 && i < convertibleVideos.length - 1) {
+                await new Promise(resolve => setTimeout(resolve, 2000))
+            }
+        }
+
+        removeProgressListener()
+        setIsConverting(false)
+        setConversionProgress({ current: 0, total: 0, currentFile: '' })
+        setFileProgress(0)
+
+        if (!cancelled) {
+            alert('変換が完了しました')
+        }
+        handleClearSelection()
+    }
+
+    // Handle cancel conversion
+    const handleCancelConversion = async () => {
+        setConversionCancelled(true)
+        // Cancel current file conversion
+        if (conversionProgress.currentFile) {
+            const currentVideo = convertibleVideos.find(v => v.name === conversionProgress.currentFile)
+            if (currentVideo) {
+                await window.electron.cancelConversion(currentVideo.path)
+            }
+        }
+        setIsConverting(false)
+        setConversionProgress({ current: 0, total: 0, currentFile: '' })
+        setFileProgress(0)
+        alert('変換を中止しました')
+    }
 
     // Get header title
     const getTitle = () => {
@@ -209,11 +315,38 @@ export default function VideoGrid({
                                     <span className="text-cn-border">|</span>
                                     <button
                                         onClick={() => onBatchRename(selectedVideos)}
-                                        className="flex items-center gap-1.5 text-xs bg-gradient-to-r from-purple-500 to-pink-500 text-white px-3 py-1.5 rounded-lg hover:opacity-90 transition-opacity"
+                                        disabled={isConverting}
+                                        className="flex items-center gap-1.5 text-xs bg-gradient-to-r from-purple-500 to-pink-500 text-white px-3 py-1.5 rounded-lg hover:opacity-90 transition-opacity disabled:opacity-50"
                                     >
                                         <FileText className="w-3.5 h-3.5" />
                                         一括リネーム
                                     </button>
+                                </>
+                            )}
+                            {selectedVideoIds.size > 0 && (
+                                <>
+                                    <span className="text-cn-border">|</span>
+                                    {isConverting ? (
+                                        <div className="flex items-center gap-2 text-xs text-white bg-blue-500/80 px-3 py-1.5 rounded-lg">
+                                            <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                            <span>変換中 {conversionProgress.current}/{conversionProgress.total}</span>
+                                        </div>
+                                    ) : (
+                                        <button
+                                            onClick={handleBatchConvert}
+                                            className="flex items-center gap-1.5 text-xs bg-gradient-to-r from-blue-500 to-cyan-500 text-white px-3 py-1.5 rounded-lg hover:opacity-90 transition-opacity"
+                                            title={convertibleVideos.length < selectedVideos.length
+                                                ? `${convertibleVideos.length}件変換 (${selectedVideos.length - convertibleVideos.length}件MP4/非対応スキップ)`
+                                                : `${convertibleVideos.length}件変換`
+                                            }
+                                        >
+                                            <RefreshCw className="w-3.5 h-3.5" />
+                                            一括MP4変換
+                                            {convertibleVideos.length < selectedVideos.length && (
+                                                <span className="text-white/70">({convertibleVideos.length})</span>
+                                            )}
+                                        </button>
+                                    )}
                                 </>
                             )}
                         </div>
@@ -316,6 +449,72 @@ export default function VideoGrid({
                     )
                 )}
             </div>
+
+            {/* Conversion Progress Modal */}
+            {isConverting && (
+                <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center">
+                    <div className="w-full max-w-md bg-cn-surface border border-cn-border rounded-2xl shadow-2xl p-6">
+                        <div className="flex items-center gap-3 mb-6">
+                            <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-blue-500 to-cyan-500 flex items-center justify-center">
+                                <RefreshCw className="w-6 h-6 text-white animate-spin" />
+                            </div>
+                            <div>
+                                <h3 className="text-lg font-semibold text-white">MP4に変換中</h3>
+                                <p className="text-sm text-white/60">
+                                    {conversionProgress.current} / {conversionProgress.total} ファイル
+                                </p>
+                            </div>
+                        </div>
+
+                        {/* Current file */}
+                        <div className="mb-4">
+                            <p className="text-sm text-white/80 mb-2 truncate" title={conversionProgress.currentFile}>
+                                変換中: {conversionProgress.currentFile}
+                            </p>
+                        </div>
+
+                        {/* File progress bar */}
+                        <div className="mb-2">
+                            <div className="flex justify-between text-xs text-white/60 mb-1">
+                                <span>ファイル進捗</span>
+                                <span>{fileProgress}%</span>
+                            </div>
+                            <div className="w-full h-3 bg-cn-dark rounded-full overflow-hidden">
+                                <div
+                                    className="h-full bg-gradient-to-r from-blue-500 to-cyan-500 transition-all duration-300"
+                                    style={{ width: `${fileProgress}%` }}
+                                />
+                            </div>
+                        </div>
+
+                        {/* Overall progress bar */}
+                        <div className="mb-6">
+                            <div className="flex justify-between text-xs text-white/60 mb-1">
+                                <span>全体進捗</span>
+                                <span>{Math.round((conversionProgress.current / conversionProgress.total) * 100)}%</span>
+                            </div>
+                            <div className="w-full h-3 bg-cn-dark rounded-full overflow-hidden">
+                                <div
+                                    className="h-full bg-gradient-to-r from-purple-500 to-pink-500 transition-all duration-300"
+                                    style={{ width: `${(conversionProgress.current / conversionProgress.total) * 100}%` }}
+                                />
+                            </div>
+                        </div>
+
+                        {/* Cancel button */}
+                        <button
+                            onClick={handleCancelConversion}
+                            className="w-full py-3 bg-cn-error/20 text-cn-error border border-cn-error/30 rounded-lg hover:bg-cn-error/30 transition-colors font-medium"
+                        >
+                            変換を中止
+                        </button>
+
+                        <p className="text-xs text-white/40 text-center mt-4">
+                            変換中は他の操作ができません
+                        </p>
+                    </div>
+                </div>
+            )}
         </div>
     )
 }

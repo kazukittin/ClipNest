@@ -80,7 +80,12 @@ export interface ElectronAPI {
     setDownloadPath: (path: string) => Promise<{ success: boolean, path: string }>
     selectDownloadFolder: () => Promise<string | null>
     onDownloadProgress: (callback: (data: { id: string, progress: number, status: string }) => void) => () => void
-    onDownloadError: (callback: (data: { id: string, error: string }) => void) => () => void
+    onDownloadError: (callback: (data: { id: string, error: string, details?: string }) => void) => () => void
+    onDownloadWarning: (callback: (data: { id: string, warning: string, fullLog: string }) => void) => () => void
+    // Video conversion operations
+    convertToMp4: (filePath: string, deleteOriginal?: boolean) => Promise<{ success: boolean, newPath?: string, error?: string }>
+    cancelConversion: (filePath: string) => Promise<{ success: boolean }>
+    onConversionProgress: (callback: (data: { filePath: string, progress: number, status: string, newPath?: string, error?: string }) => void) => () => void
 }
 
 // Create the API object
@@ -125,6 +130,19 @@ const electronAPI: ElectronAPI = {
         const handler = (_event: any, data: any) => callback(data)
         ipcRenderer.on('download-error', handler)
         return () => ipcRenderer.removeListener('download-error', handler)
+    },
+    onDownloadWarning: (callback) => {
+        const handler = (_event: any, data: any) => callback(data)
+        ipcRenderer.on('download-warning', handler)
+        return () => ipcRenderer.removeListener('download-warning', handler)
+    },
+    // Video conversion operations
+    convertToMp4: (filePath: string, deleteOriginal?: boolean) => ipcRenderer.invoke('convert-to-mp4', filePath, deleteOriginal),
+    cancelConversion: (filePath: string) => ipcRenderer.invoke('cancel-conversion', filePath),
+    onConversionProgress: (callback) => {
+        const handler = (_event: any, data: any) => callback(data)
+        ipcRenderer.on('conversion-progress', handler)
+        return () => ipcRenderer.removeListener('conversion-progress', handler)
     },
     // Window control operations
     minimizeWindow: () => ipcRenderer.send('window-minimize'),

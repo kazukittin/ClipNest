@@ -14,7 +14,7 @@ if (typeof global.File === 'undefined') {
 import { join, basename, extname } from 'path'
 import { readdir, stat, mkdir, access, readFile, unlink, rename } from 'fs/promises'
 import { spawn } from 'child_process'
-import { existsSync, createReadStream } from 'fs'
+import { existsSync, createReadStream, unlinkSync } from 'fs'
 import { randomUUID } from 'crypto'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import ffmpeg from 'fluent-ffmpeg'
@@ -862,6 +862,139 @@ ipcMain.handle('delete-video', async (_event, filePath: string): Promise<{ succe
     }
 })
 
+// Handler: Convert video to MP4
+const activeConversions = new Map<string, any>()
+
+ipcMain.handle('convert-to-mp4', async (event, filePath: string, deleteOriginal: boolean = false): Promise<{ success: boolean, newPath?: string, error?: string }> => {
+    const ext = extname(filePath).toLowerCase()
+
+    // Skip if already mp4
+    if (ext === '.mp4') {
+        return { success: true, newPath: filePath }
+    }
+
+    // Check supported formats
+    const supportedFormats = ['.mkv', '.avi', '.mov', '.wmv', '.flv', '.webm', '.m4v', '.ts', '.mts']
+    if (!supportedFormats.includes(ext)) {
+        return { success: false, error: `サポートされていない形式です: ${ext}` }
+    }
+
+    const dir = join(filePath, '..')
+    const baseName = basename(filePath, ext)
+    const outputPath = join(dir, `${baseName}.mp4`)
+
+    // Check if output already exists
+    if (existsSync(outputPath)) {
+        return { success: false, error: '同名のMP4ファイルが既に存在します' }
+    }
+
+    console.log(`Starting conversion: ${filePath} -> ${outputPath}`)
+
+    return new Promise((resolve) => {
+        const command = ffmpeg(filePath)
+            .outputOptions([
+                '-c:v', 'libx264',     // H.264 video codec
+                '-preset', 'medium',    // Encoding speed/quality balance
+                '-crf', '23',           // Quality (lower = better, 18-28 recommended)
+                '-c:a', 'aac',          // AAC audio codec
+                '-b:a', '192k',         // Audio bitrate
+                '-movflags', '+faststart' // Enable fast start for web playback
+            ])
+            .output(outputPath)
+            .on('start', (commandLine) => {
+                console.log(`FFmpeg command: ${commandLine}`)
+            })
+            .on('progress', (progress) => {
+                if (progress.percent && !event.sender.isDestroyed()) {
+                    event.sender.send('conversion-progress', {
+                        filePath,
+                        progress: Math.round(progress.percent),
+                        status: 'converting'
+                    })
+                }
+            })
+            .on('end', async () => {
+                console.log(`Conversion completed: ${outputPath}`)
+
+                // Migrate metadata to new path
+                const metadata = getVideoMetadata(filePath)
+                if (metadata.isFavorite || metadata.tags.length > 0 || metadata.lastPlayedTime) {
+                    saveVideoMetadata(outputPath, metadata)
+                    const allMetadata = store.get('videoMetadata', {})
+                    delete allMetadata[filePath]
+                    store.set('videoMetadata', allMetadata)
+                }
+
+                // Delete original if requested
+                if (deleteOriginal) {
+                    try {
+                        await shell.trashItem(filePath)
+                        console.log(`Original file moved to trash: ${filePath}`)
+                    } catch (err) {
+                        console.error('Failed to delete original file:', err)
+                    }
+                }
+
+                activeConversions.delete(filePath)
+
+                // Try to free memory after conversion
+                if (typeof global.gc === 'function') {
+                    global.gc()
+                }
+
+                if (!event.sender.isDestroyed()) {
+                    event.sender.send('conversion-progress', {
+                        filePath,
+                        progress: 100,
+                        status: 'completed',
+                        newPath: outputPath
+                    })
+                }
+
+                resolve({ success: true, newPath: outputPath })
+            })
+            .on('error', (err) => {
+                console.error(`Conversion failed: ${err.message}`)
+                activeConversions.delete(filePath)
+
+                // Clean up partial output file
+                if (existsSync(outputPath)) {
+                    try {
+                        unlinkSync(outputPath)
+                    } catch (e) {
+                        console.error('Failed to delete partial output:', e)
+                    }
+                }
+
+                if (!event.sender.isDestroyed()) {
+                    event.sender.send('conversion-progress', {
+                        filePath,
+                        progress: 0,
+                        status: 'error',
+                        error: err.message
+                    })
+                }
+
+                resolve({ success: false, error: err.message })
+            })
+
+        activeConversions.set(filePath, command)
+        command.run()
+    })
+})
+
+// Handler: Cancel video conversion
+ipcMain.handle('cancel-conversion', async (_event, filePath: string): Promise<{ success: boolean }> => {
+    const command = activeConversions.get(filePath)
+    if (command) {
+        command.kill('SIGKILL')
+        activeConversions.delete(filePath)
+        console.log(`Conversion cancelled: ${filePath}`)
+        return { success: true }
+    }
+    return { success: false }
+})
+
 // ========================================
 // StreamVault (Downloader) Handlers
 // ========================================
@@ -1045,13 +1178,20 @@ ipcMain.handle('fetch-video-product-data', async (_, code: string) => {
 })
 
 function setupProcessListeners(process: any, id: string, event: Electron.IpcMainInvokeEvent) {
+    let stderrBuffer: string[] = []
+    let lastProgress = 0
+    let hasReceivedData = false
+    let totalDurationSeconds = 0  // Store total duration for ffmpeg progress calculation
+
     process.stdout.on('data', (data: Buffer) => {
         const line = data.toString()
+        hasReceivedData = true
         console.log(`[DL ${id}] ${line}`)
 
         const progressMatch = line.match(/(\d+\.?\d*)%/)
         if (progressMatch) {
             const progress = parseFloat(progressMatch[1])
+            lastProgress = progress
             if (!event.sender.isDestroyed()) {
                 event.sender.send('download-progress', { id, progress, status: 'downloading' })
             }
@@ -1065,16 +1205,121 @@ function setupProcessListeners(process: any, id: string, event: Electron.IpcMain
     })
 
     process.stderr.on('data', (data: Buffer) => {
-        console.error(`[DL ERR ${id}] ${data.toString()}`)
+        const line = data.toString()
+        hasReceivedData = true
+
+        // ffmpeg progress output to stderr is normal, not an error
+        // These lines contain progress info like "frame=", "fps=", "size=", "time=", etc.
+        const isFfmpegProgress = line.includes('frame=') && line.includes('fps=')
+        const isHlsInfo = line.includes('[hls @') && line.includes("Opening '")
+        const isInfoMessage = line.includes('[info]') || line.includes('[download]')
+        const isDurationInfo = line.includes('Duration:')
+        const isStreamMapping = line.includes('Stream mapping:') || line.includes('Stream #') || line.includes('Output #') || line.includes('Input #')
+
+        // Extract total duration from ffmpeg output (e.g., "Duration: 00:07:26.30")
+        if (isDurationInfo) {
+            const durationMatch = line.match(/Duration:\s*(\d{2}):(\d{2}):(\d{2})\.(\d+)/)
+            if (durationMatch) {
+                const hours = parseInt(durationMatch[1])
+                const minutes = parseInt(durationMatch[2])
+                const seconds = parseInt(durationMatch[3])
+                totalDurationSeconds = hours * 3600 + minutes * 60 + seconds
+                console.log(`[DL ${id}] Total duration: ${totalDurationSeconds} seconds`)
+            }
+        }
+
+        // Parse ffmpeg progress from time= field and calculate percentage
+        if (isFfmpegProgress && totalDurationSeconds > 0) {
+            const timeMatch = line.match(/time=(\d{2}):(\d{2}):(\d{2})\.(\d+)/)
+            if (timeMatch) {
+                const hours = parseInt(timeMatch[1])
+                const minutes = parseInt(timeMatch[2])
+                const seconds = parseInt(timeMatch[3])
+                const currentSeconds = hours * 3600 + minutes * 60 + seconds
+                const progress = Math.min(99, Math.round((currentSeconds / totalDurationSeconds) * 100))
+
+                if (progress > lastProgress) {
+                    lastProgress = progress
+                    if (!event.sender.isDestroyed()) {
+                        event.sender.send('download-progress', { id, progress, status: 'downloading' })
+                    }
+                }
+            }
+        }
+
+        // Only log actual errors, not ffmpeg progress
+        if (!isFfmpegProgress && !isHlsInfo && !isStreamMapping && !isDurationInfo) {
+            console.error(`[DL ERR ${id}] ${line}`)
+        }
+
+        // Only store and send actual warnings/errors, not progress info
+        if (!isFfmpegProgress && !isHlsInfo && !isInfoMessage && !isStreamMapping && !isDurationInfo) {
+            stderrBuffer.push(line)
+
+            // Send stderr updates to renderer for debugging (accumulate up to 10 lines)
+            if (stderrBuffer.length > 10) {
+                stderrBuffer.shift()
+            }
+
+            // Only send warning if it's an actual warning/error message
+            const isWarning = line.toLowerCase().includes('warning') ||
+                line.toLowerCase().includes('error') ||
+                line.includes('ERROR:') ||
+                line.includes('WARNING:')
+
+            if (isWarning && !event.sender.isDestroyed()) {
+                event.sender.send('download-warning', {
+                    id,
+                    warning: line.trim(),
+                    fullLog: stderrBuffer.join('\n')
+                })
+            }
+        }
+    })
+
+    process.on('error', (err: Error) => {
+        console.error(`[DL SPAWN ERR ${id}] Failed to start process:`, err.message)
+        if (!event.sender.isDestroyed()) {
+            event.sender.send('download-error', {
+                id,
+                error: `プロセス起動失敗: ${err.message}`,
+                details: 'yt-dlpがインストールされているか確認してください。\nインストール: pip install yt-dlp または https://github.com/yt-dlp/yt-dlp/releases'
+            })
+        }
+        activeDownloads.delete(id)
     })
 
     process.on('close', (code: number) => {
         console.log(`Download process ${id} exited with code ${code}`)
         activeDownloads.delete(id)
+
         if (code !== 0 && code !== null) {
+            const errorDetails = stderrBuffer.length > 0
+                ? stderrBuffer.join('\n')
+                : 'エラー詳細なし'
+
             if (!event.sender.isDestroyed()) {
-                event.sender.send('download-error', { id, error: `Process exited with code ${code}` })
+                event.sender.send('download-error', {
+                    id,
+                    error: `終了コード: ${code}`,
+                    details: errorDetails
+                })
             }
+        } else if (!hasReceivedData && lastProgress === 0) {
+            // Process completed but never received any data
+            if (!event.sender.isDestroyed()) {
+                event.sender.send('download-error', {
+                    id,
+                    error: 'ダウンロードデータを受信できませんでした',
+                    details: stderrBuffer.length > 0 ? stderrBuffer.join('\n') : 'yt-dlpの出力がありませんでした'
+                })
+            }
+        }
+
+        // Clear buffer and try to free memory
+        stderrBuffer.length = 0
+        if (typeof global.gc === 'function') {
+            global.gc()
         }
     })
 }
