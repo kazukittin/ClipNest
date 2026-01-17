@@ -21,7 +21,9 @@ import {
     ChevronLeft,
     ChevronRight,
     ArrowLeft,
-    ArrowRight
+    ArrowRight,
+    RotateCcw,
+    PlayCircle
 } from 'lucide-react'
 import { Video } from '../../types/video'
 
@@ -67,6 +69,10 @@ export default function VideoPlayer({ video, onClose, onToggleFavorite, onUpdate
     const [hoverTime, setHoverTime] = useState<number | null>(null)
     const [hoverPosition, setHoverPosition] = useState<number | null>(null)
 
+    // Resume dialog state
+    const [showResumeDialog, setShowResumeDialog] = useState(false)
+    const [hasResumePoint, setHasResumePoint] = useState(false)
+
     // Feedback Overlay State
     const [feedback, setFeedback] = useState<{ icon: React.ReactNode, text?: string } | null>(null)
 
@@ -100,14 +106,40 @@ export default function VideoPlayer({ video, onClose, onToggleFavorite, onUpdate
         onClose()
     }, [savePlaybackTime, onClose])
 
-    // Initial seek to last played time
+    // Check for resume point and show dialog
     useEffect(() => {
-        if (videoRef.current && video.lastPlayedTime && video.lastPlayedTime > 0) {
+        if (video.lastPlayedTime && video.lastPlayedTime > 5) {
+            setHasResumePoint(true)
+            setShowResumeDialog(true)
+            // Pause video until user chooses
+            if (videoRef.current) {
+                videoRef.current.pause()
+            }
+        } else {
+            setHasResumePoint(false)
+            setShowResumeDialog(false)
+        }
+    }, [video.id])
+
+    // Handle resume choice
+    const handleResumeFromStart = useCallback(() => {
+        setShowResumeDialog(false)
+        if (videoRef.current) {
+            videoRef.current.currentTime = 0
+            setCurrentTime(0)
+            videoRef.current.play().catch(err => console.error('Playback error:', err))
+        }
+    }, [])
+
+    const handleResumeFromLast = useCallback(() => {
+        setShowResumeDialog(false)
+        if (videoRef.current && video.lastPlayedTime) {
             videoRef.current.currentTime = video.lastPlayedTime
             setCurrentTime(video.lastPlayedTime)
-            showFeedback(<Play className="w-8 h-8" />, `続きから再生`)
+            videoRef.current.play().catch(err => console.error('Playback error:', err))
+            showFeedback(<Play className="w-8 h-8" />, `${formatTime(video.lastPlayedTime)} から再生`)
         }
-    }, [video.id]) // Run when video ID changes
+    }, [video.lastPlayedTime, showFeedback])
 
     // Periodic save
     useEffect(() => {
@@ -465,14 +497,65 @@ export default function VideoPlayer({ video, onClose, onToggleFavorite, onUpdate
                     console.error('Video Error:', e)
                     setIsLoading(false)
                 }}
-                autoPlay
+                autoPlay={!hasResumePoint}
             />
 
             {/* Loading Spinner */}
-            {isLoading && !videoError && (
+            {isLoading && !videoError && !showResumeDialog && (
                 <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
                     <div className="bg-black/50 p-4 rounded-full backdrop-blur-md">
                         <Loader2 className="w-12 h-12 text-white animate-spin" />
+                    </div>
+                </div>
+            )}
+
+            {/* Resume Dialog */}
+            {showResumeDialog && video.lastPlayedTime && (
+                <div className="absolute inset-0 flex items-center justify-center z-50 bg-black/80 backdrop-blur-sm">
+                    <div className="bg-cn-surface border border-cn-border rounded-2xl shadow-2xl p-6 max-w-md w-full mx-4 animate-in fade-in zoom-in-95 duration-200">
+                        <div className="text-center mb-6">
+                            <h3 className="text-xl font-bold text-white mb-2">再生位置の選択</h3>
+                            <p className="text-white/60 text-sm">
+                                前回の再生位置: <span className="text-cn-accent font-mono">{formatTime(video.lastPlayedTime)}</span>
+                            </p>
+                        </div>
+
+                        <div className="flex flex-col gap-3">
+                            {/* Resume from last position */}
+                            <button
+                                onClick={handleResumeFromLast}
+                                className="flex items-center gap-4 w-full p-4 bg-gradient-to-r from-cn-accent to-purple-500 text-white rounded-xl hover:opacity-90 transition-opacity group"
+                            >
+                                <div className="w-12 h-12 rounded-full bg-white/20 flex items-center justify-center group-hover:scale-110 transition-transform">
+                                    <PlayCircle className="w-7 h-7" />
+                                </div>
+                                <div className="text-left">
+                                    <div className="font-semibold">途中から再生</div>
+                                    <div className="text-sm text-white/70">{formatTime(video.lastPlayedTime)} から続きを再生</div>
+                                </div>
+                            </button>
+
+                            {/* Start from beginning */}
+                            <button
+                                onClick={handleResumeFromStart}
+                                className="flex items-center gap-4 w-full p-4 bg-cn-dark border border-cn-border text-white rounded-xl hover:bg-cn-surface transition-colors group"
+                            >
+                                <div className="w-12 h-12 rounded-full bg-white/10 flex items-center justify-center group-hover:scale-110 transition-transform">
+                                    <RotateCcw className="w-6 h-6" />
+                                </div>
+                                <div className="text-left">
+                                    <div className="font-semibold">初めから再生</div>
+                                    <div className="text-sm text-white/50">0:00 から新しく再生</div>
+                                </div>
+                            </button>
+                        </div>
+
+                        <button
+                            onClick={handleClose}
+                            className="w-full mt-4 py-2 text-sm text-white/50 hover:text-white transition-colors"
+                        >
+                            キャンセル
+                        </button>
                     </div>
                 </div>
             )}

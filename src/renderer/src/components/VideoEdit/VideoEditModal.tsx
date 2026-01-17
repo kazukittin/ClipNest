@@ -19,7 +19,7 @@ export default function VideoEditModal({
     const [tagsInput, setTagsInput] = useState(video.tags.join(', '))
     const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
     const [isDeleting, setIsDeleting] = useState(false)
-    const [productCode, setProductCode] = useState('')
+    const [productCode, setProductCode] = useState(video.productCode || '')
     const [isFetchingInfo, setIsFetchingInfo] = useState(false)
     const [isConverting, setIsConverting] = useState(false)
     const [conversionProgress, setConversionProgress] = useState(0)
@@ -35,22 +35,25 @@ export default function VideoEditModal({
     // Handle keyboard shortcuts
     useEffect(() => {
         const handleKeyDown = (e: KeyboardEvent) => {
+            // Don't handle shortcuts when typing in inputs (except for Escape)
+            const isInputFocused = ['INPUT', 'TEXTAREA'].includes(document.activeElement?.tagName || '')
+
             if (e.key === 'Escape') {
                 if (showDeleteConfirm) {
                     setShowDeleteConfirm(false)
-                } else {
+                } else if (!isConverting) {
                     onClose()
                 }
-            } else if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+            } else if (e.key === 'Enter' && (e.ctrlKey || e.metaKey) && !isInputFocused) {
                 handleSave()
             }
         }
 
         window.addEventListener('keydown', handleKeyDown)
         return () => window.removeEventListener('keydown', handleKeyDown)
-    }, [name, tagsInput, showDeleteConfirm, onClose])
+    }, [name, tagsInput, showDeleteConfirm, onClose, isConverting])
 
-    const handleSave = () => {
+    const handleSave = async () => {
         const trimmedName = name.trim()
         if (!trimmedName) return
 
@@ -59,6 +62,12 @@ export default function VideoEditModal({
             .split(',')
             .map(t => t.trim().toLowerCase())
             .filter(t => t.length > 0)
+
+        // Save product code if changed
+        const trimmedProductCode = productCode.trim()
+        if (trimmedProductCode !== (video.productCode || '')) {
+            await window.electron.updateProductCode(video.path, trimmedProductCode)
+        }
 
         onSave(trimmedName, newTags)
     }
@@ -221,6 +230,7 @@ export default function VideoEditModal({
                             type="text"
                             value={name}
                             onChange={(e) => setName(e.target.value)}
+                            onKeyDown={(e) => e.stopPropagation()}
                             placeholder="動画の名前を入力..."
                             className="w-full px-4 py-2.5 bg-cn-dark border border-cn-border rounded-lg text-white placeholder:text-white/40 focus:outline-none focus:border-cn-accent transition-colors"
                         />
@@ -239,6 +249,7 @@ export default function VideoEditModal({
                             type="text"
                             value={tagsInput}
                             onChange={(e) => setTagsInput(e.target.value)}
+                            onKeyDown={(e) => e.stopPropagation()}
                             placeholder="タグをカンマ区切りで入力..."
                             className="w-full px-4 py-2.5 bg-cn-dark border border-cn-border rounded-lg text-white placeholder:text-white/40 focus:outline-none focus:border-cn-accent transition-colors"
                         />

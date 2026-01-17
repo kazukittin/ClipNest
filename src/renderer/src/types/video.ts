@@ -11,6 +11,7 @@ export interface VideoFile {
     isFavorite: boolean
     tags: string[]
     lastPlayedTime?: number
+    productCode?: string
 }
 
 // Video type (same as VideoFile now that metadata is included)
@@ -21,6 +22,7 @@ export interface VideoMetadata {
     isFavorite: boolean
     tags: string[]
     lastPlayedTime?: number
+    productCode?: string
 }
 
 // Product data retrieved from online
@@ -56,6 +58,7 @@ export interface ElectronAPI {
     toggleFavorite: (filePath: string) => Promise<boolean>
     updateTags: (filePath: string, tags: string[]) => Promise<string[]>
     updatePlaybackTime: (filePath: string, time: number) => Promise<void>
+    updateProductCode: (filePath: string, productCode: string) => Promise<string>
     getMetadata: (filePath: string) => Promise<VideoMetadata>
     // Watched folders operations
     getWatchedFolders: () => Promise<WatchedFolder[]>
@@ -91,6 +94,7 @@ export interface ElectronAPI {
     convertToMp4: (filePath: string, deleteOriginal?: boolean) => Promise<{ success: boolean, newPath?: string, error?: string }>
     cancelConversion: (filePath: string) => Promise<{ success: boolean }>
     onConversionProgress: (callback: (data: { filePath: string, progress: number, status: string, newPath?: string, error?: string }) => void) => () => void
+    onVideoRemoved: (callback: (data: { path: string }) => void) => () => void
 }
 
 // Extend Window interface

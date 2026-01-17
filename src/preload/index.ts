@@ -51,6 +51,7 @@ export interface ElectronAPI {
     toggleFavorite: (filePath: string) => Promise<boolean>
     updateTags: (filePath: string, tags: string[]) => Promise<string[]>
     updatePlaybackTime: (filePath: string, time: number) => Promise<void>
+    updateProductCode: (filePath: string, productCode: string) => Promise<string>
     getMetadata: (filePath: string) => Promise<VideoMetadata>
     // Watched folders operations
     getWatchedFolders: () => Promise<WatchedFolder[]>
@@ -86,6 +87,7 @@ export interface ElectronAPI {
     convertToMp4: (filePath: string, deleteOriginal?: boolean) => Promise<{ success: boolean, newPath?: string, error?: string }>
     cancelConversion: (filePath: string) => Promise<{ success: boolean }>
     onConversionProgress: (callback: (data: { filePath: string, progress: number, status: string, newPath?: string, error?: string }) => void) => () => void
+    onVideoRemoved: (callback: (data: { path: string }) => void) => () => void
 }
 
 // Create the API object
@@ -100,6 +102,7 @@ const electronAPI: ElectronAPI = {
     toggleFavorite: (filePath: string) => ipcRenderer.invoke('toggle-favorite', filePath),
     updateTags: (filePath: string, tags: string[]) => ipcRenderer.invoke('update-tags', filePath, tags),
     updatePlaybackTime: (filePath: string, time: number) => ipcRenderer.invoke('update-playback-time', filePath, time),
+    updateProductCode: (filePath: string, productCode: string) => ipcRenderer.invoke('update-product-code', filePath, productCode),
     getMetadata: (filePath: string) => ipcRenderer.invoke('get-metadata', filePath),
     // Watched folders operations
     getWatchedFolders: () => ipcRenderer.invoke('get-watched-folders'),
@@ -143,6 +146,11 @@ const electronAPI: ElectronAPI = {
         const handler = (_event: any, data: any) => callback(data)
         ipcRenderer.on('conversion-progress', handler)
         return () => ipcRenderer.removeListener('conversion-progress', handler)
+    },
+    onVideoRemoved: (callback) => {
+        const handler = (_event: any, data: any) => callback(data)
+        ipcRenderer.on('video-removed', handler)
+        return () => ipcRenderer.removeListener('video-removed', handler)
     },
     // Window control operations
     minimizeWindow: () => ipcRenderer.send('window-minimize'),

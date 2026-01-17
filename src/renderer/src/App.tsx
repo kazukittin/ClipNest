@@ -106,9 +106,16 @@ function App(): JSX.Element {
             }
         })
 
+        // When a video is removed (e.g., after conversion)
+        const removeVideoRemovedListener = window.electron.onVideoRemoved(({ path }) => {
+            console.log(`Video removed: ${path}`)
+            setVideos(prev => prev.filter(v => v.path !== path))
+        })
+
         return () => {
             removeVideoFileReadyListener()
             removeScanCompleteListener()
+            removeVideoRemovedListener()
             if (flushTimeoutRef.current) {
                 clearTimeout(flushTimeoutRef.current)
             }

@@ -15,7 +15,7 @@ import { join, basename, extname } from 'path'
 import { readdir, stat, mkdir, access, readFile, unlink, rename } from 'fs/promises'
 import { spawn } from 'child_process'
 import { existsSync, createReadStream, unlinkSync } from 'fs'
-import { randomUUID } from 'crypto'
+import { randomUUID, createHash } from 'crypto'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import ffmpeg from 'fluent-ffmpeg'
 const ffmpegStatic = require('ffmpeg-static')
@@ -67,6 +67,7 @@ interface VideoMetadata {
     isFavorite: boolean
     tags: string[]
     lastPlayedTime?: number
+    productCode?: string
 }
 
 interface VideoFile {
@@ -81,6 +82,7 @@ interface VideoFile {
     isFavorite: boolean
     tags: string[]
     lastPlayedTime?: number
+    productCode?: string
 }
 
 interface WatchedFolder {
@@ -121,6 +123,10 @@ function getCachedVideos(): VideoFile[] {
 function saveCachedVideos(videos: VideoFile[]): void {
     store.set('cachedVideos', videos)
     console.log(`Saved ${videos.length} videos to cache`)
+    // Free memory after saving cache
+    if (typeof global.gc === 'function') {
+        global.gc()
+    }
 }
 
 function updateVideoCache(newVideos: VideoFile[]): void {
@@ -254,6 +260,10 @@ async function generateThumbnail(
             })
             .on('end', () => {
                 console.log(`Thumbnail generated: ${thumbnailPath}`)
+                // Try to free memory after thumbnail generation
+                if (typeof global.gc === 'function') {
+                    global.gc()
+                }
                 resolve(thumbnailPath)
             })
             .on('error', (err) => {
@@ -359,6 +369,7 @@ ipcMain.handle('scan-folder-progressive', async (event, folderPath: string): Pro
         }
 
         const totalFiles = videoFileNames.length
+        let processedCount = 0
 
         // Process each video file and send to renderer as it completes
         for (const file of videoFileNames) {
@@ -370,9 +381,9 @@ ipcMain.handle('scan-folder-progressive', async (event, folderPath: string): Pro
                 const videoId = randomUUID()
                 const videoName = basename(file, extension)
 
-                // Check if thumbnail already exists (using path hash for caching)
-                const pathHash = Buffer.from(filePath).toString('base64').replace(/[/+=]/g, '_').slice(0, 32)
-                const cachedThumbnailPath = join(thumbnailsDir, `${pathHash}_v2.jpg`)
+                // Check if thumbnail already exists (using SHA256 hash for caching)
+                const pathHash = createHash('sha256').update(filePath).digest('hex').slice(0, 32)
+                const cachedThumbnailPath = join(thumbnailsDir, `${pathHash}_v3.jpg`)
 
                 let thumbnailPath: string | null = null
 
@@ -400,7 +411,8 @@ ipcMain.handle('scan-folder-progressive', async (event, folderPath: string): Pro
                     duration: duration,
                     isFavorite: metadata.isFavorite,
                     tags: metadata.tags,
-                    lastPlayedTime: metadata.lastPlayedTime
+                    lastPlayedTime: metadata.lastPlayedTime,
+                    productCode: metadata.productCode
                 }
 
                 // Send the video file to renderer (check if window is still alive)
@@ -411,6 +423,15 @@ ipcMain.handle('scan-folder-progressive', async (event, folderPath: string): Pro
                     return { totalFiles }
                 }
 
+                processedCount++
+
+                // Every 20 files, try to free memory
+                if (processedCount % 20 === 0) {
+                    if (typeof global.gc === 'function') {
+                        global.gc()
+                    }
+                }
+
             } catch (err) {
                 console.error(`Error processing file ${filePath}:`, err)
             }
@@ -419,6 +440,11 @@ ipcMain.handle('scan-folder-progressive', async (event, folderPath: string): Pro
         // Signal that scanning is complete (check if window is still alive)
         if (!event.sender.isDestroyed()) {
             event.sender.send('scan-folder-complete', folderPath)
+        }
+
+        // Free memory after scan complete
+        if (typeof global.gc === 'function') {
+            global.gc()
         }
 
         return { totalFiles }
@@ -457,9 +483,9 @@ ipcMain.handle('scan-folder', async (_event, folderPath: string): Promise<VideoF
                 const videoId = randomUUID()
                 const videoName = basename(file, extension)
 
-                // Check if thumbnail already exists (using path hash for caching)
-                const pathHash = Buffer.from(filePath).toString('base64').replace(/[/+=]/g, '_').slice(0, 32)
-                const cachedThumbnailPath = join(thumbnailsDir, `${pathHash}.jpg`)
+                // Check if thumbnail already exists (using SHA256 hash for caching)
+                const pathHash = createHash('sha256').update(filePath).digest('hex').slice(0, 32)
+                const cachedThumbnailPath = join(thumbnailsDir, `${pathHash}_v3.jpg`)
 
                 let thumbnailPath: string | null = null
 
@@ -606,6 +632,15 @@ ipcMain.handle('update-playback-time', async (_event, filePath: string, time: nu
     const metadata = getVideoMetadata(filePath)
     metadata.lastPlayedTime = time
     saveVideoMetadata(filePath, metadata)
+})
+
+// Handler: Update product code for a video
+ipcMain.handle('update-product-code', async (_event, filePath: string, productCode: string): Promise<string> => {
+    const metadata = getVideoMetadata(filePath)
+    metadata.productCode = productCode
+    saveVideoMetadata(filePath, metadata)
+    console.log(`Product code updated for ${filePath}: ${productCode}`)
+    return productCode
 })
 
 // Handler: Get metadata for a specific video
@@ -819,6 +854,11 @@ ipcMain.handle('batch-rename-videos', async (
         }
 
         return { success: false, results: [], errors: ['一括リネームに失敗しました'] }
+    } finally {
+        // Free memory after batch rename
+        if (typeof global.gc === 'function') {
+            global.gc()
+        }
     }
 })
 
@@ -831,12 +871,14 @@ ipcMain.handle('delete-video', async (_event, filePath: string): Promise<{ succe
         // Remove thumbnails
         try {
             const thumbnailsDir = await getThumbnailsDir()
-            const pathHash = Buffer.from(filePath).toString('base64').replace(/[/+=]/g, '_').slice(0, 32)
+            const oldPathHash = Buffer.from(filePath).toString('base64').replace(/[/+=]/g, '_').slice(0, 32)
+            const newPathHash = createHash('sha256').update(filePath).digest('hex').slice(0, 32)
 
-            // Try to delete both v1 and v2 thumbnails
+            // Try to delete all versions of thumbnails (v1, v2 base64 hash, v3 SHA256 hash)
             const thumbnailPaths = [
-                join(thumbnailsDir, `${pathHash}.jpg`),
-                join(thumbnailsDir, `${pathHash}_v2.jpg`)
+                join(thumbnailsDir, `${oldPathHash}.jpg`),
+                join(thumbnailsDir, `${oldPathHash}_v2.jpg`),
+                join(thumbnailsDir, `${newPathHash}_v3.jpg`)
             ]
 
             for (const tPath of thumbnailPaths) {
@@ -930,6 +972,14 @@ ipcMain.handle('convert-to-mp4', async (event, filePath: string, deleteOriginal:
                     try {
                         await shell.trashItem(filePath)
                         console.log(`Original file moved to trash: ${filePath}`)
+
+                        // Remove original file from video cache
+                        removeFromVideoCache([filePath])
+
+                        // Notify UI to remove the old video
+                        if (!event.sender.isDestroyed()) {
+                            event.sender.send('video-removed', { path: filePath })
+                        }
                     } catch (err) {
                         console.error('Failed to delete original file:', err)
                     }
@@ -1168,13 +1218,22 @@ ipcMain.handle('fetch-video-product-data', async (_, code: string) => {
 
     // Determine handler
     // FC2 pattern: contains FC2, or just 6+ digits, or xxx-xxx-xxx (FC2-PPV-...)
+    let result = null
     if (code.toUpperCase().includes('FC2') || /^\d{6,}$/.test(code)) {
-        const res = await fetchFC2(code)
-        if (res) return res
+        result = await fetchFC2(code)
     }
 
-    // Default to DMM for others (most AV codes)
-    return await fetchDMM(code)
+    if (!result) {
+        // Default to DMM for others (most AV codes)
+        result = await fetchDMM(code)
+    }
+
+    // Free memory after fetching product data
+    if (typeof global.gc === 'function') {
+        global.gc()
+    }
+
+    return result
 })
 
 function setupProcessListeners(process: any, id: string, event: Electron.IpcMainInvokeEvent) {
