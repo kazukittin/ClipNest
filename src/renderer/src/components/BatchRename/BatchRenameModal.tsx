@@ -9,25 +9,24 @@ interface BatchRenameModalProps {
 }
 
 export default function BatchRenameModal({ videos, onClose, onComplete }: BatchRenameModalProps): JSX.Element {
-    const [prefix, setPrefix] = useState('video_')
-    const [startNumber, setStartNumber] = useState(1)
-    const [padLength, setPadLength] = useState(3)
     const [isProcessing, setIsProcessing] = useState(false)
     const [error, setError] = useState<string | null>(null)
     const [success, setSuccess] = useState(false)
+    const [successMessage, setSuccessMessage] = useState('')
 
-    // Preview the new names
+    // Preview the new names (fixed: 001, 002, 003...)
     const previewNames = useMemo(() => {
         return videos.map((video, index) => {
-            const num = (startNumber + index).toString().padStart(padLength, '0')
-            const newName = `${prefix}${num}${video.extension}`
+            const num = (index + 1).toString().padStart(3, '0')
+            const newName = `${num}${video.extension}`
             return {
                 oldName: `${video.name}${video.extension}`,
                 newName,
-                video
+                video,
+                isSame: video.name === num
             }
         })
-    }, [videos, prefix, startNumber, padLength])
+    }, [videos])
 
     const handleRename = async () => {
         setIsProcessing(true)
@@ -35,19 +34,23 @@ export default function BatchRenameModal({ videos, onClose, onComplete }: BatchR
 
         try {
             const videoPaths = videos.map(v => v.path)
-            const result = await window.electron.batchRenameVideos(
-                videoPaths,
-                prefix,
-                startNumber,
-                padLength
-            )
+            const result = await window.electron.batchRenameVideos(videoPaths)
 
             if (result.success) {
                 setSuccess(true)
+                const renamedCount = result.results.length - result.skipped
+                const endNumber = result.startNumber + videos.length - 1
+                const startStr = result.startNumber.toString().padStart(3, '0')
+                const endStr = endNumber.toString().padStart(3, '0')
+                if (result.skipped > 0) {
+                    setSuccessMessage(`${renamedCount}件をリネーム（${startStr}〜${endStr}、${result.skipped}件スキップ）`)
+                } else {
+                    setSuccessMessage(`${renamedCount}件をリネーム（${startStr}〜${endStr}）`)
+                }
                 setTimeout(() => {
                     onComplete(result.results)
                     onClose()
-                }, 1000)
+                }, 1500)
             } else {
                 setError(result.errors.join('\n'))
             }
@@ -76,7 +79,7 @@ export default function BatchRenameModal({ videos, onClose, onComplete }: BatchR
                         </div>
                         <div>
                             <h2 className="text-xl font-bold text-white">一括連番リネーム</h2>
-                            <p className="text-sm text-cn-text-muted">{videos.length}個のファイルを選択中</p>
+                            <p className="text-sm text-cn-text-muted">{videos.length}個のファイルを選択中 → 001〜{videos.length.toString().padStart(3, '0')}</p>
                         </div>
                     </div>
                     <button
@@ -87,87 +90,31 @@ export default function BatchRenameModal({ videos, onClose, onComplete }: BatchR
                     </button>
                 </div>
 
-                {/* Settings */}
-                <div className="p-6 space-y-4 border-b border-cn-border">
-                    <div className="grid grid-cols-3 gap-4">
-                        {/* Prefix */}
-                        <div className="col-span-2">
-                            <label className="block text-sm font-medium text-cn-text-muted mb-2">
-                                プレフィックス
-                            </label>
-                            <input
-                                type="text"
-                                value={prefix}
-                                onChange={(e) => setPrefix(e.target.value)}
-                                placeholder="video_ (空の場合は連番のみ)"
-                                className="w-full bg-cn-dark border border-cn-border rounded-lg px-4 py-2.5 text-cn-text focus:outline-none focus:border-cn-accent"
-                            />
-                        </div>
-
-                        {/* Start Number */}
-                        <div>
-                            <label className="block text-sm font-medium text-cn-text-muted mb-2">
-                                開始番号
-                            </label>
-                            <input
-                                type="number"
-                                min="0"
-                                value={startNumber}
-                                onChange={(e) => setStartNumber(Math.max(0, parseInt(e.target.value) || 0))}
-                                className="w-full bg-cn-dark border border-cn-border rounded-lg px-4 py-2.5 text-cn-text focus:outline-none focus:border-cn-accent"
-                            />
-                        </div>
-                    </div>
-
-                    <div>
-                        <label className="block text-sm font-medium text-cn-text-muted mb-2">
-                            桁数（ゼロ埋め）
-                        </label>
-                        <div className="flex gap-2">
-                            {[2, 3, 4, 5].map((len) => (
-                                <button
-                                    key={len}
-                                    onClick={() => setPadLength(len)}
-                                    className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${padLength === len
-                                        ? 'bg-cn-accent text-white'
-                                        : 'bg-cn-dark border border-cn-border text-cn-text-muted hover:bg-cn-surface-hover'
-                                        }`}
-                                >
-                                    {len}桁
-                                </button>
-                            ))}
-                        </div>
-                    </div>
-                </div>
-
                 {/* Preview */}
                 <div className="flex-1 overflow-auto p-6">
-                    <h3 className="text-sm font-medium text-cn-text-muted mb-3">プレビュー</h3>
+                    <h3 className="text-sm font-medium text-cn-text-muted mb-3">プレビュー（3桁0埋め連番）</h3>
                     <div className="space-y-2 max-h-64 overflow-y-auto">
-                        {previewNames.map((item, index) => {
-                            const isSame = item.oldName === item.newName
-                            return (
-                                <div
-                                    key={item.video.id}
-                                    className={`flex items-center gap-3 p-3 rounded-lg text-sm ${isSame ? 'bg-cn-surface border border-cn-border opacity-60' : 'bg-cn-dark'}`}
-                                >
-                                    <span className="text-cn-text-muted w-8">{index + 1}.</span>
-                                    <span className="text-cn-text truncate flex-1" title={item.oldName}>
-                                        {item.oldName}
-                                    </span>
-                                    <ArrowRight className="w-4 h-4 text-cn-text-muted flex-shrink-0" />
-                                    <span className={`font-medium truncate flex-1 ${isSame ? 'text-cn-text-muted' : 'text-cn-accent'}`} title={item.newName}>
-                                        {isSame ? '(変更なし)' : item.newName}
-                                    </span>
-                                </div>
-                            )
-                        })}
+                        {previewNames.map((item, index) => (
+                            <div
+                                key={item.video.id}
+                                className={`flex items-center gap-3 p-3 rounded-lg text-sm ${item.isSame ? 'bg-cn-surface border border-cn-border opacity-60' : 'bg-cn-dark'}`}
+                            >
+                                <span className="text-cn-text-muted w-8">{index + 1}.</span>
+                                <span className="text-cn-text truncate flex-1" title={item.oldName}>
+                                    {item.oldName}
+                                </span>
+                                <ArrowRight className="w-4 h-4 text-cn-text-muted flex-shrink-0" />
+                                <span className={`font-medium truncate flex-1 ${item.isSame ? 'text-cn-text-muted' : 'text-cn-accent'}`} title={item.newName}>
+                                    {item.isSame ? '(変更なし)' : item.newName}
+                                </span>
+                            </div>
+                        ))}
                     </div>
                 </div>
 
                 {/* Error/Success Message */}
                 {error && (
-                    <div className="mx-6 mb-4 p-4 bg-red-500/10 border border-red-500/30 rounded-lg flex items-start gap-3">
+                    <div className="mx-6 mb-4 p-4 bg-red-500/10 border border-red-500/30 rounded-lg flex items-start gap-3 max-h-32 overflow-y-auto">
                         <AlertCircle className="w-5 h-5 text-red-400 flex-shrink-0 mt-0.5" />
                         <span className="text-red-400 text-sm whitespace-pre-wrap">{error}</span>
                     </div>
@@ -176,7 +123,7 @@ export default function BatchRenameModal({ videos, onClose, onComplete }: BatchR
                 {success && (
                     <div className="mx-6 mb-4 p-4 bg-green-500/10 border border-green-500/30 rounded-lg flex items-center gap-3">
                         <CheckCircle className="w-5 h-5 text-green-400" />
-                        <span className="text-green-400 text-sm">リネームが完了しました！</span>
+                        <span className="text-green-400 text-sm">{successMessage}</span>
                     </div>
                 )}
 

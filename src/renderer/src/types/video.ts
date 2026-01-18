@@ -72,7 +72,7 @@ export interface ElectronAPI {
     // File operations
     renameVideo: (oldPath: string, newName: string) => Promise<{ success: boolean, newPath: string | null, error?: string }>
     deleteVideo: (filePath: string) => Promise<{ success: boolean, error?: string }>
-    batchRenameVideos: (videoPaths: string[], prefix: string, startNumber: number, padLength: number) => Promise<{ success: boolean, results: { oldPath: string, newPath: string }[], errors: string[] }>
+    batchRenameVideos: (videoPaths: string[]) => Promise<{ success: boolean, results: { oldPath: string, newPath: string }[], errors: string[], skipped: number, startNumber: number }>
     // Window control operations
     minimizeWindow: () => void
     maximizeWindow: () => void

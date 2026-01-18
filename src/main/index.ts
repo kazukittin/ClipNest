@@ -750,47 +750,115 @@ interface BatchRenameItem {
 
 ipcMain.handle('batch-rename-videos', async (
     _event,
-    videoPaths: string[],
-    prefix: string,
-    startNumber: number,
-    padLength: number
-): Promise<{ success: boolean, results: BatchRenameItem[], errors: string[] }> => {
+    videoPaths: string[]
+): Promise<{ success: boolean, results: BatchRenameItem[], errors: string[], skipped: number, startNumber?: number }> => {
     const results: BatchRenameItem[] = []
     const errors: string[] = []
+    let skipped = 0
+    const MAX_ERRORS = 5
+    const padLength = 3
+
+    if (videoPaths.length === 0) {
+        return { success: false, results: [], errors: ['ファイルが選択されていません'], skipped: 0, startNumber: 1 }
+    }
+
+    // Get the directory of the first file (assuming all files are in the same directory)
+    const targetDir = join(videoPaths[0], '..')
+
+    // Find ALL existing numbered files in the directory that are NOT in our batch
+    const takenNumbers = new Set<number>()
+    try {
+        const files = await readdir(targetDir)
+        const numberPattern = /^(\d{3,})\.(mp4|mov|avi|mkv|wmv|flv|webm|m4v)$/i
+
+        for (const file of files) {
+            const match = file.match(numberPattern)
+            if (match) {
+                const filePath = join(targetDir, file)
+                // Check case-insensitively if this file is in our batch
+                const isInBatch = videoPaths.some(p => p.toLowerCase() === filePath.toLowerCase())
+                if (!isInBatch) {
+                    const num = parseInt(match[1], 10)
+                    takenNumbers.add(num)
+                }
+            }
+        }
+    } catch (err) {
+        console.error('Error reading directory:', err)
+    }
+
+    console.log(`Batch rename: ${takenNumbers.size} numbers already taken (not in batch)`)
+
+    // Generate available numbers (skipping taken ones)
+    const availableNumbers: number[] = []
+    let nextNum = 1
+    while (availableNumbers.length < videoPaths.length) {
+        if (!takenNumbers.has(nextNum)) {
+            availableNumbers.push(nextNum)
+        }
+        nextNum++
+    }
+
+    const startNumber = availableNumbers.length > 0 ? availableNumbers[0] : 1
+    const endNumber = availableNumbers.length > 0 ? availableNumbers[availableNumbers.length - 1] : videoPaths.length
+    console.log(`Batch rename: will use numbers from ${startNumber} to ${endNumber}`)
 
     // First, validate all new paths don't conflict
     const newPaths: Map<string, string> = new Map()
+    const usedNewPaths = new Set<string>()
     for (let i = 0; i < videoPaths.length; i++) {
         const oldPath = videoPaths[i]
         const dir = join(oldPath, '..')
         const extension = extname(oldPath)
-        const num = (startNumber + i).toString().padStart(padLength, '0')
-        const newName = `${prefix}${num}`
+        const num = availableNumbers[i].toString().padStart(padLength, '0')
+        const newName = num
         const newPath = join(dir, `${newName}${extension}`)
 
-        // Skip if name is unchanged
-        if (newPath === oldPath) {
+        // Skip if name is unchanged (already matches pattern)
+        if (newPath.toLowerCase() === oldPath.toLowerCase()) {
             results.push({ oldPath, newPath })
+            skipped++
             continue
         }
 
-        // Check for conflicts with existing files (not in our batch)
-        if (existsSync(newPath) && !videoPaths.includes(newPath)) {
-            errors.push(`${newName}${extension} は既に存在します`)
+        // Check if current file already has the target name pattern
+        const currentBaseName = basename(oldPath, extension)
+        if (currentBaseName === num) {
+            // Already has the correct name
+            results.push({ oldPath, newPath: oldPath })
+            skipped++
             continue
+        }
+
+        // Check for conflicts with existing files (case-insensitive, not in our batch)
+        if (existsSync(newPath)) {
+            const isInBatch = videoPaths.some(p => p.toLowerCase() === newPath.toLowerCase())
+            if (!isInBatch) {
+                if (errors.length < MAX_ERRORS) {
+                    errors.push(`${newName}${extension} は既に存在します`)
+                }
+                continue
+            }
         }
 
         // Check for conflicts within our batch
-        if (newPaths.has(newPath)) {
-            errors.push(`重複: ${newName}${extension}`)
+        if (usedNewPaths.has(newPath.toLowerCase())) {
+            if (errors.length < MAX_ERRORS) {
+                errors.push(`重複: ${newName}${extension}`)
+            }
             continue
         }
 
+        usedNewPaths.add(newPath.toLowerCase())
         newPaths.set(oldPath, newPath)
     }
 
     if (errors.length > 0) {
-        return { success: false, results: [], errors }
+        const totalErrors = errors.length
+        if (totalErrors >= MAX_ERRORS) {
+            errors.push(`... 他にもエラーがあります`)
+        }
+        return { success: false, results: [], errors, skipped, startNumber }
     }
 
     // Perform the renames
@@ -800,8 +868,7 @@ ipcMain.handle('batch-rename-videos', async (
 
     try {
         // Step 1: Rename all to temp names
-        for (const entry of Array.from(newPaths.entries())) {
-            const oldPath = entry[0]
+        for (const [oldPath, _newPath] of Array.from(newPaths.entries())) {
             const dir = join(oldPath, '..')
             const extension = extname(oldPath)
             const baseName = basename(oldPath, extension)
@@ -812,9 +879,7 @@ ipcMain.handle('batch-rename-videos', async (
         }
 
         // Step 2: Rename from temp to final names
-        for (const entry of Array.from(newPaths.entries())) {
-            const oldPath = entry[0]
-            const newPath = entry[1]
+        for (const [oldPath, newPath] of Array.from(newPaths.entries())) {
             const dir = join(oldPath, '..')
             const extension = extname(oldPath)
             const baseName = basename(oldPath, extension)
@@ -836,7 +901,7 @@ ipcMain.handle('batch-rename-videos', async (
             console.log(`Batch renamed: ${oldPath} -> ${newPath}`)
         }
 
-        return { success: true, results, errors: [] }
+        return { success: true, results, errors: [], skipped, startNumber }
     } catch (error) {
         console.error('Error in batch rename:', error)
 
@@ -853,7 +918,7 @@ ipcMain.handle('batch-rename-videos', async (
             }
         }
 
-        return { success: false, results: [], errors: ['一括リネームに失敗しました'] }
+        return { success: false, results: [], errors: ['一括リネームに失敗しました'], skipped: 0, startNumber: 1 }
     } finally {
         // Free memory after batch rename
         if (typeof global.gc === 'function') {

@@ -65,7 +65,7 @@ export interface ElectronAPI {
     // File operations
     renameVideo: (oldPath: string, newName: string) => Promise<{ success: boolean, newPath: string | null, error?: string }>
     deleteVideo: (filePath: string) => Promise<{ success: boolean, error?: string }>
-    batchRenameVideos: (videoPaths: string[], prefix: string, startNumber: number, padLength: number) => Promise<{ success: boolean, results: { oldPath: string, newPath: string }[], errors: string[] }>
+    batchRenameVideos: (videoPaths: string[]) => Promise<{ success: boolean, results: { oldPath: string, newPath: string }[], errors: string[], skipped: number, startNumber: number }>
     // Window control operations
     minimizeWindow: () => void
     maximizeWindow: () => void
@@ -116,8 +116,8 @@ const electronAPI: ElectronAPI = {
     // File operations
     renameVideo: (oldPath: string, newName: string) => ipcRenderer.invoke('rename-video', oldPath, newName),
     deleteVideo: (filePath: string) => ipcRenderer.invoke('delete-video', filePath),
-    batchRenameVideos: (videoPaths: string[], prefix: string, startNumber: number, padLength: number) =>
-        ipcRenderer.invoke('batch-rename-videos', videoPaths, prefix, startNumber, padLength),
+    batchRenameVideos: (videoPaths: string[]) =>
+        ipcRenderer.invoke('batch-rename-videos', videoPaths),
     // StreamVault operations
     downloadVideo: (url: string, id: string) => ipcRenderer.invoke('download-video', { url, id }),
     cancelDownload: (id: string) => ipcRenderer.invoke('cancel-download', id),
