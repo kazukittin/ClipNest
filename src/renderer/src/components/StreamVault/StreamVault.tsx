@@ -138,18 +138,13 @@ export default function StreamVault(): JSX.Element {
         setHistory([])
     }
 
-    // Start download (Real implementation)
-    const handleStartDownload = async () => {
-        if (queue.length === 0) return
-        if (isDownloading) return
+    // Start download for the next queued item
+    const startNextDownload = async () => {
+        // Find first queued task
+        const taskToProcess = queue.find(t => t.status === 'queued')
+        if (!taskToProcess) return
 
         setIsDownloading(true)
-
-        // Take the first item from queue
-        // In a real queue with concurrent downloads, we'd manage this differently
-        // For now, process one by one
-
-        const taskToProcess = queue[0]
         const taskId = taskToProcess.id
 
         setQueue(prev => prev.map(t =>
@@ -167,6 +162,31 @@ export default function StreamVault(): JSX.Element {
         }
     }
 
+    // Start download (Real implementation)
+    const handleStartDownload = async () => {
+        if (queue.length === 0) return
+        if (isDownloading) return
+
+        startNextDownload()
+    }
+
+    // Auto-start next download when queue has items and not currently downloading
+    // This effect watches for queue changes and automatically starts the next download
+    useEffect(() => {
+        // Check if we have queued items and not currently downloading
+        const hasQueuedItems = queue.some(t => t.status === 'queued')
+        const hasDownloadingItem = queue.some(t => t.status === 'downloading')
+
+        if (hasQueuedItems && !isDownloading && !hasDownloadingItem) {
+            // Small delay to allow state to settle and for memory cleanup
+            const timer = setTimeout(() => {
+                startNextDownload()
+            }, 1000)
+
+            return () => clearTimeout(timer)
+        }
+    }, [queue, isDownloading])
+
     // Listen to download events
     useEffect(() => {
         const removeProgressListener = window.electron.onDownloadProgress(({ id, progress, status }) => {
@@ -180,18 +200,7 @@ export default function StreamVault(): JSX.Element {
                     return prev.filter(t => t.id !== id)
                 })
                 setIsDownloading(false)
-                // Trigger next download if any
-                setTimeout(() => {
-                    setQueue(remaining => {
-                        if (remaining.length > 0) {
-                            // This is a bit tricky with React state closures, 
-                            // ideally we'd have a separate effect watching queue/isDownloading
-                            // For now, handled by user clicking 'Start' again or simple logic below
-                            return remaining
-                        }
-                        return remaining
-                    })
-                }, 500)
+                // Note: Next download will be triggered automatically by the useEffect watching queue/isDownloading
             } else {
                 // Update progress
                 setQueue(prev => prev.map(t =>
@@ -205,6 +214,7 @@ export default function StreamVault(): JSX.Element {
                 t.id === id ? { ...t, status: 'error', error, errorDetails: details } : t
             ))
             setIsDownloading(false)
+            // Note: Next download will be triggered automatically by the useEffect watching queue/isDownloading
         })
 
         const removeWarningListener = window.electron.onDownloadWarning(({ id, warning }) => {
