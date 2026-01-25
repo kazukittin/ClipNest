@@ -10,7 +10,8 @@ import {
     Home,
     Film,
     Download,
-    Trash2
+    Trash2,
+    RotateCw
 } from 'lucide-react'
 import { WatchedFolder } from '../../types/video'
 
@@ -26,6 +27,7 @@ interface SidebarProps {
     onTagSelect: (tag: string | null) => void
     onFavoritesToggle: () => void
     onImportFolder: () => void
+    onRefreshLibrary: () => void
     searchQuery: string
     onSearchChange: (query: string) => void
     onClearCache: () => void
@@ -43,6 +45,7 @@ export default function Sidebar({
     onTagSelect,
     onFavoritesToggle,
     onImportFolder,
+    onRefreshLibrary,
     searchQuery,
     onSearchChange,
     onClearCache
@@ -63,6 +66,19 @@ export default function Sidebar({
                         <p className="text-[10px] text-cn-text-muted leading-none">動画マネージャー</p>
                     </div>
                 </div>
+            </div>
+
+            {/* Refresh Library Button */}
+            <div className="p-3 border-b border-cn-border">
+                <button
+                    onClick={onRefreshLibrary}
+                    className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded-lg text-sm font-medium
+          bg-cn-accent/10 hover:bg-cn-accent text-cn-accent hover:text-white 
+          transition-all duration-300 shadow-sm border border-cn-accent/20"
+                >
+                    <RotateCw className="w-4 h-4" />
+                    <span>ライブラリを更新</span>
+                </button>
             </div>
 
             {/* Search */}

@@ -64,6 +64,7 @@ export interface ElectronAPI {
     getWatchedFolders: () => Promise<WatchedFolder[]>
     saveWatchedFolder: (folder: WatchedFolder) => Promise<void>
     removeWatchedFolder: (folderPath: string) => Promise<void>
+    getVideoSubfolders: (parentPath: string) => Promise<{ path: string, name: string }[]>
     // Video cache operations
     getCachedVideos: () => Promise<VideoFile[]>
     saveVideoCache: (videos: Video[]) => Promise<void>

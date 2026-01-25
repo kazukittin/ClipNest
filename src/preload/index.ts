@@ -57,6 +57,7 @@ export interface ElectronAPI {
     getWatchedFolders: () => Promise<WatchedFolder[]>
     saveWatchedFolder: (folder: WatchedFolder) => Promise<void>
     removeWatchedFolder: (folderPath: string) => Promise<void>
+    getVideoSubfolders: (parentPath: string) => Promise<{ path: string, name: string }[]>
     // Video cache operations
     getCachedVideos: () => Promise<VideoFile[]>
     saveVideoCache: (videos: VideoFile[]) => Promise<void>
@@ -108,6 +109,7 @@ const electronAPI: ElectronAPI = {
     getWatchedFolders: () => ipcRenderer.invoke('get-watched-folders'),
     saveWatchedFolder: (folder: WatchedFolder) => ipcRenderer.invoke('save-watched-folder', folder),
     removeWatchedFolder: (folderPath: string) => ipcRenderer.invoke('remove-watched-folder', folderPath),
+    getVideoSubfolders: (parentPath: string) => ipcRenderer.invoke('get-video-subfolders', parentPath),
     // Video cache operations
     getCachedVideos: () => ipcRenderer.invoke('get-cached-videos'),
     saveVideoCache: (videos: VideoFile[]) => ipcRenderer.invoke('save-video-cache', videos),

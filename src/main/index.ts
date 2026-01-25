@@ -346,40 +346,52 @@ ipcMain.handle('select-folder', async (): Promise<string | null> => {
 })
 
 // Handler: Scan folder for video files (PROGRESSIVE - sends events for each video)
-ipcMain.handle('scan-folder-progressive', async (event, folderPath: string): Promise<{ totalFiles: number }> => {
-    try {
-        const files = await readdir(folderPath)
-        const thumbnailsDir = await getThumbnailsDir()
+// Helper: Recursively get all video files in a directory
+async function getAllVideoFiles(dirPath: string): Promise<string[]> {
+    const results: string[] = []
+    const list = await readdir(dirPath)
 
-        // Filter video files first
-        const videoFileNames: string[] = []
-        for (const file of files) {
-            const extension = extname(file).toLowerCase()
-            if (VIDEO_EXTENSIONS.includes(extension)) {
-                const filePath = join(folderPath, file)
-                try {
-                    const fileStat = await stat(filePath)
-                    if (!fileStat.isDirectory()) {
-                        videoFileNames.push(file)
-                    }
-                } catch {
-                    // Skip files we can't stat
+    for (const file of list) {
+        const filePath = join(dirPath, file)
+        try {
+            const fileStat = await stat(filePath)
+            if (fileStat.isDirectory()) {
+                const subResults = await getAllVideoFiles(filePath)
+                results.push(...subResults)
+            } else {
+                const extension = extname(file).toLowerCase()
+                if (VIDEO_EXTENSIONS.includes(extension)) {
+                    results.push(filePath)
                 }
             }
+        } catch (err) {
+            console.error(`Error statting file/dir ${filePath}:`, err)
         }
+    }
+    return results
+}
 
-        const totalFiles = videoFileNames.length
+// Handler: Scan folder for video files (PROGRESSIVE - sends events for each video)
+ipcMain.handle('scan-folder-progressive', async (event, folderPath: string): Promise<{ totalFiles: number }> => {
+    try {
+        const thumbnailsDir = await getThumbnailsDir()
+
+        // Get all video files recursively
+        const videoFilesPaths = await getAllVideoFiles(folderPath)
+        const totalFiles = videoFilesPaths.length
         let processedCount = 0
 
+        console.log(`Starting scan of ${folderPath}: found ${totalFiles} videos recursively`)
+
         // Process each video file and send to renderer as it completes
-        for (const file of videoFileNames) {
-            const filePath = join(folderPath, file)
-            const extension = extname(file).toLowerCase()
+        for (const filePath of videoFilesPaths) {
+            const fileName = basename(filePath)
+            const extension = extname(filePath).toLowerCase()
 
             try {
                 const fileStat = await stat(filePath)
                 const videoId = randomUUID()
-                const videoName = basename(file, extension)
+                const videoName = basename(fileName, extension)
 
                 // Check if thumbnail already exists (using SHA256 hash for caching)
                 const pathHash = createHash('sha256').update(filePath).digest('hex').slice(0, 32)
@@ -667,6 +679,32 @@ ipcMain.handle('save-watched-folder', async (_event, folder: WatchedFolder): Pro
 ipcMain.handle('remove-watched-folder', async (_event, folderPath: string): Promise<void> => {
     removeWatchedFolder(folderPath)
     console.log(`Removed watched folder: ${folderPath}`)
+})
+
+// Handler: Get immediate subfolders that contain videos
+ipcMain.handle('get-video-subfolders', async (_event, parentPath: string): Promise<{ path: string, name: string }[]> => {
+    try {
+        const entries = await readdir(parentPath, { withFileTypes: true })
+        const subfolders: { path: string, name: string }[] = []
+
+        for (const entry of entries) {
+            if (entry.isDirectory()) {
+                const subPath = join(parentPath, entry.name)
+                // Check if this subfolder has any videos recursively
+                const videos = await getAllVideoFiles(subPath)
+                if (videos.length > 0) {
+                    subfolders.push({
+                        path: subPath,
+                        name: entry.name
+                    })
+                }
+            }
+        }
+        return subfolders
+    } catch (err) {
+        console.error(`Error getting subfolders for ${parentPath}:`, err)
+        return []
+    }
 })
 
 // ========================================

@@ -552,6 +552,77 @@ function App(): JSX.Element {
         }))
     }, [])
 
+    // Handle library refresh
+    const handleRefreshLibrary = useCallback(async () => {
+        if (isLoading) return
+
+        try {
+            setIsLoading(true)
+            setLoadingMessage('ライブラリを更新中...')
+
+            // Create a copy of current folders to work with
+            let foldersToScan = [...watchedFolders]
+
+            // 1. Scan for new immediate subfolders in each current watched folder
+            for (const folder of watchedFolders) {
+                try {
+                    const subfolders = await window.electron.getVideoSubfolders(folder.path)
+                    for (const sub of subfolders) {
+                        const alreadyWatched = watchedFolders.some(f => f.path === sub.path) ||
+                            foldersToScan.some(f => f.path === sub.path)
+
+                        if (!alreadyWatched) {
+                            const newFolder: WatchedFolder = {
+                                path: sub.path,
+                                name: sub.name,
+                                videoCount: 0
+                            }
+                            foldersToScan.push(newFolder)
+                            // Save to persistent storage and update state
+                            await window.electron.saveWatchedFolder(newFolder)
+                        }
+                    }
+                } catch (error) {
+                    console.error(`Error checking subfolders for ${folder.path}:`, error)
+                }
+            }
+
+            // Update state with all found folders including new ones
+            setWatchedFolders(foldersToScan)
+
+            // 2. Scan each folder progressively (including new ones)
+            for (const folder of foldersToScan) {
+                scanningFoldersRef.current.add(folder.path)
+                try {
+                    const result = await window.electron.scanFolderProgressive(folder.path)
+                    // Update folder video count in state
+                    setWatchedFolders(prev =>
+                        prev.map(f =>
+                            f.path === folder.path
+                                ? { ...f, videoCount: result.totalFiles }
+                                : f
+                        )
+                    )
+                    // Save updated count to persistence
+                    await window.electron.saveWatchedFolder({
+                        ...folder,
+                        videoCount: result.totalFiles
+                    })
+                } catch (error) {
+                    console.error(`Error refreshing folder ${folder.path}:`, error)
+                    scanningFoldersRef.current.delete(folder.path)
+                }
+            }
+            // Done
+            setIsLoading(false)
+            setLoadingMessage('')
+        } catch (error) {
+            console.error('Error refreshing library:', error)
+            setIsLoading(false)
+            setLoadingMessage('')
+        }
+    }, [watchedFolders, isLoading])
+
     // Handle cache clear
     const handleClearCache = useCallback(async () => {
         if (!confirm('キャッシュを削除して再読み込みしますか？\n（動画ファイル自体は削除されません）')) {
@@ -592,6 +663,7 @@ function App(): JSX.Element {
                     onTagSelect={handleTagSelectWrapper}
                     onFavoritesToggle={handleFavoritesToggleWrapper}
                     onImportFolder={handleImportFolder}
+                    onRefreshLibrary={handleRefreshLibrary}
                     searchQuery={searchQuery}
                     onSearchChange={setSearchQuery}
                     onClearCache={handleClearCache}
