@@ -50,6 +50,7 @@ function App(): JSX.Element {
     const pendingVideosRef = useRef<Video[]>([])
     const pendingPathsRef = useRef<Set<string>>(new Set())
     const flushTimeoutRef = useRef<NodeJS.Timeout | null>(null)
+    const initializationStartedRef = useRef(false)
 
     // Flush pending videos to state
     const flushPendingVideos = useCallback(() => {
@@ -60,8 +61,9 @@ function App(): JSX.Element {
         pendingPathsRef.current.clear()
 
         setVideos(prev => {
-            const existingPaths = new Set(prev.map(v => v.path))
-            const newVideos = videosToAdd.filter(v => !existingPaths.has(v.path))
+            // Case-insensitive path comparison for Windows
+            const existingPaths = new Set(prev.map(v => v.path.toLowerCase()))
+            const newVideos = videosToAdd.filter(v => !existingPaths.has(v.path.toLowerCase()))
             if (newVideos.length === 0) return prev
             return [...prev, ...newVideos]
         })
@@ -71,11 +73,12 @@ function App(): JSX.Element {
     useEffect(() => {
         // When a video file is ready, batch it
         const removeVideoFileReadyListener = window.electron.onVideoFileReady((video) => {
-            // Check for duplicates within pending batch
-            if (pendingPathsRef.current.has(video.path)) {
+            // Check for duplicates within pending batch (case-insensitive)
+            const lowerPath = video.path.toLowerCase()
+            if (pendingPathsRef.current.has(lowerPath)) {
                 return
             }
-            pendingPathsRef.current.add(video.path)
+            pendingPathsRef.current.add(lowerPath)
             pendingVideosRef.current.push(video)
 
             // Debounce flush - wait for more videos or flush after 300ms
@@ -90,7 +93,8 @@ function App(): JSX.Element {
         // When scanning is complete
         const removeScanCompleteListener = window.electron.onScanFolderComplete((folderPath) => {
             console.log(`Scan complete for: ${folderPath}`)
-            scanningFoldersRef.current.delete(folderPath)
+            const lowerPath = folderPath.toLowerCase()
+            scanningFoldersRef.current.delete(lowerPath)
 
             // Flush any remaining pending videos immediately
             if (flushTimeoutRef.current) {
@@ -109,7 +113,8 @@ function App(): JSX.Element {
         // When a video is removed (e.g., after conversion)
         const removeVideoRemovedListener = window.electron.onVideoRemoved(({ path }) => {
             console.log(`Video removed: ${path}`)
-            setVideos(prev => prev.filter(v => v.path !== path))
+            const lowerTarget = path.toLowerCase()
+            setVideos(prev => prev.filter(v => v.path.toLowerCase() !== lowerTarget))
         })
 
         return () => {
@@ -125,6 +130,9 @@ function App(): JSX.Element {
     // Load saved folders and cached videos on app startup
     useEffect(() => {
         const loadInitialData = async () => {
+            if (initializationStartedRef.current) return
+            initializationStartedRef.current = true
+
             try {
                 // 1. Load cached videos first for instant UI
                 const cachedVideos = await window.electron.getCachedVideos()
@@ -144,13 +152,14 @@ function App(): JSX.Element {
 
                     // Scan each saved folder progressively
                     for (const folder of savedFolders) {
-                        scanningFoldersRef.current.add(folder.path)
+                        const lowerPath = folder.path.toLowerCase()
+                        scanningFoldersRef.current.add(lowerPath)
                         try {
                             const result = await window.electron.scanFolderProgressive(folder.path)
                             // Update folder video count
                             setWatchedFolders(prev =>
                                 prev.map(f =>
-                                    f.path === folder.path
+                                    f.path.toLowerCase() === lowerPath
                                         ? { ...f, videoCount: result.totalFiles }
                                         : f
                                 )
@@ -162,7 +171,8 @@ function App(): JSX.Element {
                             })
                         } catch (error) {
                             console.error(`Error scanning saved folder ${folder.path}:`, error)
-                            scanningFoldersRef.current.delete(folder.path)
+                        } finally {
+                            scanningFoldersRef.current.delete(folder.path.toLowerCase())
                         }
                     }
                 }
@@ -170,6 +180,10 @@ function App(): JSX.Element {
                 console.error('Error loading initial data:', error)
             } finally {
                 setIsInitialized(true)
+                if (scanningFoldersRef.current.size === 0) {
+                    setIsLoading(false)
+                    setLoadingMessage('')
+                }
             }
         }
 
@@ -205,7 +219,8 @@ function App(): JSX.Element {
 
             // Add to watched folders immediately
             setWatchedFolders(prev => {
-                const exists = prev.some(f => f.path === folderPath)
+                const lowerPath = folderPath.toLowerCase()
+                const exists = prev.some(f => f.path.toLowerCase() === lowerPath)
                 if (exists) {
                     return prev
                 }
@@ -213,7 +228,8 @@ function App(): JSX.Element {
             })
 
             // Track this folder as being scanned
-            scanningFoldersRef.current.add(folderPath)
+            const lowerPath = folderPath.toLowerCase()
+            scanningFoldersRef.current.add(lowerPath)
 
             // Start progressive scanning
             const result = await window.electron.scanFolderProgressive(folderPath)
@@ -222,9 +238,15 @@ function App(): JSX.Element {
             const updatedFolder = { ...newFolder, videoCount: result.totalFiles }
             setWatchedFolders(prev =>
                 prev.map(f =>
-                    f.path === folderPath ? updatedFolder : f
+                    f.path.toLowerCase() === lowerPath ? updatedFolder : f
                 )
             )
+
+            scanningFoldersRef.current.delete(lowerPath)
+            if (scanningFoldersRef.current.size === 0) {
+                setIsLoading(false)
+                setLoadingMessage('')
+            }
 
             // Save to persistent storage
             await window.electron.saveWatchedFolder(updatedFolder)
@@ -568,8 +590,9 @@ function App(): JSX.Element {
                 try {
                     const subfolders = await window.electron.getVideoSubfolders(folder.path)
                     for (const sub of subfolders) {
-                        const alreadyWatched = watchedFolders.some(f => f.path === sub.path) ||
-                            foldersToScan.some(f => f.path === sub.path)
+                        const lowerSubPath = sub.path.toLowerCase()
+                        const alreadyWatched = watchedFolders.some(f => f.path.toLowerCase() === lowerSubPath) ||
+                            foldersToScan.some(f => f.path.toLowerCase() === lowerSubPath)
 
                         if (!alreadyWatched) {
                             const newFolder: WatchedFolder = {
@@ -593,12 +616,13 @@ function App(): JSX.Element {
             // 2. Scan each folder progressively (including new ones)
             for (const folder of foldersToScan) {
                 scanningFoldersRef.current.add(folder.path)
+                setLoadingMessage(`スキャン中: ${folder.name}...`)
                 try {
                     const result = await window.electron.scanFolderProgressive(folder.path)
                     // Update folder video count in state
                     setWatchedFolders(prev =>
                         prev.map(f =>
-                            f.path === folder.path
+                            f.path.toLowerCase() === folder.path.toLowerCase()
                                 ? { ...f, videoCount: result.totalFiles }
                                 : f
                         )

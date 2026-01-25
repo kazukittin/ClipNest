@@ -11,7 +11,7 @@ if (typeof global.File === 'undefined') {
         console.warn('Failed to polyfill File:', e)
     }
 }
-import { join, basename, extname } from 'path'
+import { join, basename, extname, resolve } from 'path'
 import { readdir, stat, mkdir, access, readFile, unlink, rename } from 'fs/promises'
 import { spawn } from 'child_process'
 import { existsSync, createReadStream, unlinkSync } from 'fs'
@@ -247,7 +247,7 @@ async function generateThumbnail(
     thumbnailsDir: string
 ): Promise<string | null> {
     return new Promise((resolve) => {
-        const thumbnailFilename = `${videoId}_v2.jpg`
+        const thumbnailFilename = `${videoId}_v3.jpg`
         const thumbnailPath = join(thumbnailsDir, thumbnailFilename)
 
         ffmpeg(videoPath)
@@ -346,13 +346,22 @@ ipcMain.handle('select-folder', async (): Promise<string | null> => {
 })
 
 // Handler: Scan folder for video files (PROGRESSIVE - sends events for each video)
+// Folders to exclude from scanning
+const EXCLUDE_DIRS = ['.git', 'node_modules', '$RECYCLE.BIN', 'System Volume Information', 'AppData']
+
 // Helper: Recursively get all video files in a directory
 async function getAllVideoFiles(dirPath: string): Promise<string[]> {
     const results: string[] = []
-    const list = await readdir(dirPath)
+
+    // Normalize path to absolute and handle basic cleanup
+    const absoluteDirPath = resolve(dirPath)
+    const list = await readdir(absoluteDirPath)
 
     for (const file of list) {
-        const filePath = join(dirPath, file)
+        // Skip excluded directories
+        if (EXCLUDE_DIRS.includes(file)) continue
+
+        const filePath = resolve(absoluteDirPath, file)
         try {
             const fileStat = await stat(filePath)
             if (fileStat.isDirectory()) {
@@ -374,10 +383,11 @@ async function getAllVideoFiles(dirPath: string): Promise<string[]> {
 // Handler: Scan folder for video files (PROGRESSIVE - sends events for each video)
 ipcMain.handle('scan-folder-progressive', async (event, folderPath: string): Promise<{ totalFiles: number }> => {
     try {
+        const absolutePath = resolve(folderPath)
         const thumbnailsDir = await getThumbnailsDir()
 
         // Get all video files recursively
-        const videoFilesPaths = await getAllVideoFiles(folderPath)
+        const videoFilesPaths = await getAllVideoFiles(absolutePath)
         const totalFiles = videoFilesPaths.length
         let processedCount = 0
 
@@ -684,12 +694,16 @@ ipcMain.handle('remove-watched-folder', async (_event, folderPath: string): Prom
 // Handler: Get immediate subfolders that contain videos
 ipcMain.handle('get-video-subfolders', async (_event, parentPath: string): Promise<{ path: string, name: string }[]> => {
     try {
-        const entries = await readdir(parentPath, { withFileTypes: true })
+        const absoluteParentPath = resolve(parentPath)
+        const entries = await readdir(absoluteParentPath, { withFileTypes: true })
         const subfolders: { path: string, name: string }[] = []
 
         for (const entry of entries) {
+            // Skip excluded directories
+            if (EXCLUDE_DIRS.includes(entry.name)) continue
+
             if (entry.isDirectory()) {
-                const subPath = join(parentPath, entry.name)
+                const subPath = resolve(absoluteParentPath, entry.name)
                 // Check if this subfolder has any videos recursively
                 const videos = await getAllVideoFiles(subPath)
                 if (videos.length > 0) {
